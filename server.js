@@ -10,14 +10,21 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer);
+const io = new Server(httpServer, {
+    cors: {
+        origin: "*", // Allow all origins for Discord Activity & Testing
+        methods: ["GET", "POST"],
+        allowedHeaders: ["my-custom-header"],
+        credentials: true
+    }
+});
 
 // Serve static files
 app.use(express.static(join(__dirname, 'public')));
 
 // Game State Storage
 // Map<roomCode, GameState>
-const games = new Map();
+// const games = new Map(); // Moved below class definition
 
 class GameState {
     constructor(roomCode) {
@@ -96,18 +103,27 @@ class GameState {
             scoreFromSelection = calculateScore(values);
             this.roundAccumulatedScore += scoreFromSelection;
 
-            this.diceCountToRoll -= selected.length;
-            if (this.diceCountToRoll === 0) {
-                // Hot dice
+            // Recalculate dice to roll based on available dice and selection
+            // If I had N dice and selected M, next roll is N-M.
+            // If N-M == 0, next roll is 6 (Hot Dice).
+            const remaining = this.currentDice.length - selected.length;
+            if (remaining === 0) {
                 this.diceCountToRoll = 6;
+            } else {
+                this.diceCountToRoll = remaining;
             }
+        } else {
+            // Fresh roll or initial
+            // If currentDice is empty, standard 6 dice roll (or established diceCountToRoll)
+            // But usually diceCountToRoll is set to 6 on reset.
+            if (this.currentDice.length === 0) this.diceCountToRoll = 6;
         }
 
         // Perform Roll
         const newDice = [];
         for (let i = 0; i < this.diceCountToRoll; i++) {
             newDice.push({
-                id: Date.now() + i + Math.random(), // unique enough
+                id: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
                 value: Math.floor(Math.random() * 6) + 1,
                 selected: false
             });
@@ -134,12 +150,21 @@ class GameState {
     }
 
     toggleSelection(playerId, dieId) {
-        if (this.gameStatus !== 'playing') return;
-        if (this.getCurrentPlayer().id !== playerId) return;
+        if (this.gameStatus !== 'playing') {
+            console.log("Toggle fail: Not playing");
+            return;
+        }
+        if (this.getCurrentPlayer().id !== playerId) {
+            console.log("Toggle fail: Not current player", this.getCurrentPlayer().id, playerId);
+            return;
+        }
 
         const die = this.currentDice.find(d => d.id == dieId); // fuzzy match for ID types
         if (die) {
             die.selected = !die.selected;
+            console.log("Toggled die:", dieId, "New State:", die.selected);
+        } else {
+            console.log("Toggle fail: Die not found", dieId, "Available:", this.currentDice.map(d => d.id));
         }
         return true;
     }
@@ -242,30 +267,56 @@ class GameState {
     }
 }
 
+// Initialize 5 fixed rooms
+const games = new Map();
+const ROOM_NAMES = ['Table 1', 'Table 2', 'Table 3', 'Table 4', 'Table 5'];
+
+ROOM_NAMES.forEach(name => {
+    games.set(name, new GameState(name));
+});
+
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-    // Simple room handling
+    // Send initial room list
+    socket.emit('room_list', getRoomList());
+
     socket.on('join_game', ({ roomCode, playerName }) => {
         let game = games.get(roomCode);
-        if (!game) {
-            game = new GameState(roomCode);
-            games.set(roomCode, game);
-        }
 
-        if (game.gameStatus === 'playing' && !game.players.find(p => p.id === socket.id)) {
-            socket.emit('error', 'Game already in progress');
+        if (!game) {
+            socket.emit('error', 'Invalid Room');
             return;
         }
 
         // Reconnect logic or new player
-        const existingPlayer = game.players.find(p => p.name === playerName); // weak auth
+        let existingPlayer = game.players.find(p => p.name === playerName);
+
+        // Check for takeover of disconnected player
+        if (!existingPlayer && game.players.length >= 2) {
+            const disconnectedPlayer = game.players.find(p => !p.connected);
+            if (disconnectedPlayer) {
+                // Takeover logic
+                disconnectedPlayer.id = socket.id;
+                disconnectedPlayer.name = playerName;
+                disconnectedPlayer.connected = true;
+                disconnectedPlayer.score = 0; // Reset score for new player
+                existingPlayer = disconnectedPlayer;
+            }
+        }
+
+        if (game.players.length >= 2 && !existingPlayer) {
+            socket.emit('error', 'Room Full');
+            return;
+        }
+
         if (existingPlayer) {
-            existingPlayer.id = socket.id; // update socket id
+            existingPlayer.id = socket.id;
             existingPlayer.connected = true;
         } else {
+            // New player
             if (!game.addPlayer(socket.id, playerName)) {
-                socket.emit('error', 'Room full');
+                socket.emit('error', 'Room Full');
                 return;
             }
         }
@@ -274,6 +325,9 @@ io.on('connection', (socket) => {
         socket.emit('joined', { playerId: socket.id, state: game.getState() });
         io.to(roomCode).emit('game_state_update', game.getState());
 
+        // Broadcast updated room list to everyone in lobby
+        io.emit('room_list', getRoomList());
+
         // Auto-start if full
         if (game.players.length === 2 && game.gameStatus === 'waiting') {
             game.start();
@@ -281,6 +335,26 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('leave_game', () => {
+        // Find user's game
+        for (const game of games.values()) {
+            const p = game.players.find(p => p.id === socket.id);
+            if (p) {
+                p.connected = false;
+                // If game was pending, maybe remove them?
+                // For simplified logic, we just mark disconnected.
+                // But if they explicitly leave, we might want to clear the slot if game hasn't started?
+                if (game.gameStatus === 'waiting') {
+                    game.players = game.players.filter(pl => pl.id !== socket.id);
+                }
+                socket.leave(game.roomCode);
+                io.emit('room_list', getRoomList());
+                io.to(game.roomCode).emit('game_state_update', game.getState());
+            }
+        }
+    });
+
+    // ... existing roll/bank/toggle handlers ...
     socket.on('roll', ({ roomCode }) => {
         const game = games.get(roomCode);
         if (!game) return;
@@ -326,7 +400,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('restart', ({ roomCode }) => {
-        // Allow restart if game over
         const game = games.get(roomCode);
         if (game && game.gameStatus === 'finished') {
             game.gameStatus = 'playing';
@@ -340,9 +413,32 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        // Handle disconnects
+        console.log('Client disconnected:', socket.id);
+        for (const game of games.values()) {
+            const player = game.players.find(p => p.id === socket.id);
+            if (player) {
+                player.connected = false;
+                io.emit('room_list', getRoomList());
+
+                // If waiting, remove completely
+                if (game.gameStatus === 'waiting') {
+                    game.players = game.players.filter(pl => pl.id !== socket.id);
+                    io.emit('room_list', getRoomList()); // update again
+                }
+            }
+        }
     });
 });
+
+function getRoomList() {
+    // Return array of { name, count, max: 2, status }
+    return Array.from(games.values()).map(g => ({
+        name: g.roomCode,
+        count: g.players.filter(p => p.connected).length,
+        max: 2,
+        status: g.gameStatus
+    }));
+}
 
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {

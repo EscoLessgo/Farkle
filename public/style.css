@@ -1,42 +1,63 @@
 :root {
-    --bg-color: #0f172a;
-    --card-bg: #1e293b;
-    --primary: #6366f1;
-    --primary-hover: #4f46e5;
-    --secondary: #64748b;
-    --accent: #f43f5e;
-    --text-main: #f8fafc;
-    --text-muted: #94a3b8;
-    --success: #22c55e;
-    --die-size: 60px;
-    --die-color: #ffffff;
-    --pip-color: #000000;
+    --bg-dark: #050510;
+    --bg-panel: rgba(20, 20, 40, 0.7);
+    --primary: #00f0ff;
+    /* Cyan Neon */
+    --primary-dim: #00a0aa;
+    --accent: #bc13fe;
+    /* Purple Neon */
+    --accent-dim: #700b99;
+    --danger: #ff003c;
+    --success: #00ff9f;
+    --text-main: #e0e0ff;
+    --text-muted: #8080a0;
+
+    --glass-border: 1px solid rgba(255, 255, 255, 0.1);
+    --neon-glow: 0 0 10px rgba(0, 240, 255, 0.5), 0 0 20px rgba(0, 240, 255, 0.3);
+    --purple-glow: 0 0 10px rgba(188, 19, 254, 0.5);
+
+    --font-main: 'Outfit', sans-serif;
 }
 
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: 'Outfit', sans-serif;
+    user-select: none;
 }
 
 body {
-    background-color: var(--bg-color);
+    font-family: var(--font-main);
+    background-color: var(--bg-dark);
+    background-image:
+        radial-gradient(circle at 10% 20%, rgba(188, 19, 254, 0.1) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(0, 240, 255, 0.1) 0%, transparent 40%),
+        linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)),
+        url('cyberpunk_table_background.png');
+    /* Fallback or use generated if available */
+    background-size: cover;
+    background-position: center;
     color: var(--text-main);
     height: 100vh;
-    display: flex;
-    justify-content: center;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#bg-dice-container {
+    display: none;
+    /* remove old bg dice */
 }
 
 #app {
     width: 100%;
-    max-width: 600px;
+    max-width: 1000px;
     height: 100%;
     display: flex;
     flex-direction: column;
-    padding: 1rem;
     position: relative;
+    z-index: 10;
 }
 
 /* Header */
@@ -44,442 +65,237 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1rem;
+    padding: 1rem 2rem;
+    background: var(--bg-panel);
+    border-bottom: var(--glass-border);
+    backdrop-filter: blur(10px);
 }
 
-h1 {
-    font-size: 1.5rem;
+.game-header h1 {
+    font-size: 2rem;
     font-weight: 700;
-    color: var(--text-main);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    background: linear-gradient(90deg, var(--primary), var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
 }
 
 .icon-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
+    background: transparent;
+    border: var(--glass-border);
+    color: var(--primary);
     padding: 0.5rem;
     border-radius: 50%;
-    transition: color 0.2s, background-color 0.2s;
+    cursor: pointer;
+    transition: all 0.3s ease;
 }
 
 .icon-btn:hover {
-    color: var(--text-main);
-    background-color: rgba(255, 255, 255, 0.1);
+    background: rgba(0, 240, 255, 0.2);
+    box-shadow: var(--neon-glow);
+    transform: rotate(90deg);
 }
 
-/* Player Zones */
-.player-zones {
+/* Room List (New) */
+.room-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
-    margin-bottom: 2rem;
+    width: 100%;
+    margin-top: 1rem;
 }
 
-.player-card {
-    background-color: var(--card-bg);
+.room-card {
+    background: linear-gradient(145deg, rgba(20, 20, 40, 0.8), rgba(10, 10, 20, 0.9));
+    border: var(--glass-border);
+    padding: 1.5rem;
     border-radius: 12px;
-    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.3s;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    transition: transform 0.3s, box-shadow 0.3s, border-color 0.3s;
-    border: 2px solid transparent;
-    opacity: 0.7;
+    gap: 0.5rem;
+}
+
+.room-card:hover {
+    border-color: var(--primary);
+    box-shadow: var(--neon-glow);
+    transform: translateY(-5px);
+}
+
+.room-card.full {
+    opacity: 0.5;
+    cursor: not-allowed;
+    border-color: var(--danger);
+}
+
+.room-card h3 {
+    color: var(--primary);
+    margin-bottom: 0.5rem;
+}
+
+.room-status {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.room-card.full .room-status {
+    color: var(--danger);
+}
+
+/* Game Board */
+.game-board {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+    gap: 1rem;
+}
+
+.player-zones {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.player-card {
+    flex: 1;
+    background: var(--bg-panel);
+    border: var(--glass-border);
+    border-radius: 12px;
+    padding: 1rem;
+    backdrop-filter: blur(5px);
+    transition: all 0.5s;
+    position: relative;
+    overflow: hidden;
 }
 
 .player-card.active {
     border-color: var(--primary);
-    box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
-    opacity: 1;
-    transform: scale(1.02);
+    box-shadow: inset 0 0 20px rgba(0, 240, 255, 0.1);
+}
+
+.player-card.active::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--primary);
+    box-shadow: var(--neon-glow);
+}
+
+.player-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 0.5rem;
 }
 
 .player-name {
-    font-size: 0.9rem;
+    font-size: 1.2rem;
+    font-weight: 600;
     color: var(--text-muted);
-    margin-bottom: 0.25rem;
+}
+
+.active .player-name {
+    color: var(--text-main);
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
 }
 
 .total-score {
-    font-size: 1.5rem;
+    font-size: 2.5rem;
     font-weight: 700;
+    color: var(--accent);
+    text-shadow: var(--purple-glow);
 }
 
 .round-stats {
-    margin-top: 0.5rem;
-    width: 100%;
-    display: flex;
-    justify-content: center;
-}
-
-.stat {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    font-size: 0.8rem;
-}
-
-.stat .label {
+    text-align: center;
     color: var(--text-muted);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 0.9rem;
 }
 
-.stat .value {
-    color: var(--success);
-    font-weight: 600;
-}
-
-/* Dice Arena */
 .dice-arena {
-    flex: 1;
+    flex: 2;
     display: flex;
-    flex-direction: column;
     justify-content: center;
     align-items: center;
     position: relative;
-    perspective: 1000px;
+    min-height: 200px;
 }
 
 .dice-container {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
     gap: 1.5rem;
-    width: 100%;
+    justify-content: center;
+    padding: 2rem;
 }
 
-/* 3D Dice */
 .die {
-    width: var(--die-size);
-    height: var(--die-size);
-    position: relative;
-    transform-style: preserve-3d;
-    transition: transform 1s ease-out;
-    cursor: pointer;
-}
-
-.die.rolling {
-    animation: roll-animation 1s linear infinite;
-}
-
-.die-face {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    background-color: var(--die-color);
+    width: 60px;
+    height: 60px;
+    background: white;
     border-radius: 12px;
-    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.1);
     display: flex;
     justify-content: center;
     align-items: center;
-    backface-visibility: hidden;
-    border: 1px solid #e2e8f0;
+    font-size: 2.5rem;
+    color: #333;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
 }
 
-.pip {
-    width: 10px;
-    height: 10px;
-    background-color: var(--pip-color);
-    border-radius: 50%;
-    position: absolute;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+/* 3D / Tech Die Effect */
+.die {
+    background: linear-gradient(135deg, #e0e0e0, #ffffff);
+    border: 1px solid #ccc;
 }
 
-/* Face transforms */
-.face-1 {
-    transform: rotateY(0deg) translateZ(30px);
+[data-dice-theme="neon"] .die,
+body[data-dice-theme="neon"] .die {
+    background: rgba(0, 0, 0, 0.8);
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    box-shadow: var(--neon-glow);
+    text-shadow: 0 0 5px var(--primary);
 }
 
-.face-2 {
-    transform: rotateY(180deg) translateZ(30px);
-}
-
-.face-3 {
-    transform: rotateY(90deg) translateZ(30px);
-}
-
-.face-4 {
-    transform: rotateY(-90deg) translateZ(30px);
-}
-
-.face-5 {
-    transform: rotateX(90deg) translateZ(30px);
-}
-
-.face-6 {
-    transform: rotateX(-90deg) translateZ(30px);
-}
-
-/* Pip positioning */
-/* Pip positioning */
-.pip {
-    width: 10px;
-    height: 10px;
-    background-color: var(--pip-color);
-    border-radius: 50%;
-    position: absolute;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.face-1 .pip:nth-child(1) {
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-}
-
-.face-2 .pip:nth-child(1) {
-    top: 12px;
-    left: 12px;
-}
-
-.face-2 .pip:nth-child(2) {
-    bottom: 12px;
-    right: 12px;
-}
-
-.face-3 .pip:nth-child(1) {
-    top: 12px;
-    left: 12px;
-}
-
-.face-3 .pip:nth-child(2) {
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-}
-
-.face-3 .pip:nth-child(3) {
-    bottom: 12px;
-    right: 12px;
-}
-
-.face-4 .pip:nth-child(1) {
-    top: 12px;
-    left: 12px;
-}
-
-.face-4 .pip:nth-child(2) {
-    top: 12px;
-    right: 12px;
-}
-
-.face-4 .pip:nth-child(3) {
-    bottom: 12px;
-    left: 12px;
-}
-
-.face-4 .pip:nth-child(4) {
-    bottom: 12px;
-    right: 12px;
-}
-
-.face-5 .pip:nth-child(1) {
-    top: 12px;
-    left: 12px;
-}
-
-.face-5 .pip:nth-child(2) {
-    top: 12px;
-    right: 12px;
-}
-
-.face-5 .pip:nth-child(3) {
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-}
-
-.face-5 .pip:nth-child(4) {
-    bottom: 12px;
-    left: 12px;
-}
-
-.face-5 .pip:nth-child(5) {
-    bottom: 12px;
-    right: 12px;
-}
-
-.face-6 .pip:nth-child(1) {
-    top: 12px;
-    left: 12px;
-}
-
-.face-6 .pip:nth-child(2) {
-    top: 12px;
-    right: 12px;
-}
-
-.face-6 .pip:nth-child(3) {
-    top: 50%;
-    left: 12px;
-    transform: translateY(-50%);
-}
-
-.face-6 .pip:nth-child(4) {
-    top: 50%;
-    right: 12px;
-    transform: translateY(-50%);
-}
-
-.face-6 .pip:nth-child(5) {
-    bottom: 12px;
-    left: 12px;
-}
-
-.face-6 .pip:nth-child(6) {
-    bottom: 12px;
-    right: 12px;
-}
-
-
-/* Dice States */
+/* Selected Die */
 .die.selected {
-    /* transform removed here, handled per face below */
-    box-shadow: 0 0 15px var(--primary);
+    transform: translateY(-15px) scale(1.1);
+    box-shadow: 0 10px 20px rgba(0, 240, 255, 0.4);
+    background: var(--primary);
+    color: #000;
+    border-color: #fff;
 }
 
-.die.selected .die-face {
-    border: 2px solid var(--primary);
-    box-shadow: inset 0 0 10px rgba(99, 102, 241, 0.5);
+[data-dice-theme="neon"] .die.selected,
+body[data-dice-theme="neon"] .die.selected {
+    background: var(--primary);
+    color: #000;
+    box-shadow: 0 0 30px var(--primary);
 }
 
-/* Rotations with Selection Lift */
-/* We must explicitly state the transform for selected state to combine the lift + rotation */
-.die[data-face="1"] {
-    transform: rotateX(0deg) rotateY(0deg);
+.die.rolling {
+    animation: rollDie 0.5s linear infinite;
 }
 
-.die.selected[data-face="1"] {
-    transform: translateY(-20px) rotateX(0deg) rotateY(0deg);
-}
-
-.die[data-face="2"] {
-    transform: rotateX(0deg) rotateY(180deg);
-}
-
-.die.selected[data-face="2"] {
-    transform: translateY(-20px) rotateX(0deg) rotateY(180deg);
-}
-
-.die[data-face="3"] {
-    transform: rotateX(0deg) rotateY(-90deg);
-}
-
-.die.selected[data-face="3"] {
-    transform: translateY(-20px) rotateX(0deg) rotateY(-90deg);
-}
-
-.die[data-face="4"] {
-    transform: rotateX(0deg) rotateY(90deg);
-}
-
-.die.selected[data-face="4"] {
-    transform: translateY(-20px) rotateX(0deg) rotateY(90deg);
-}
-
-.die[data-face="5"] {
-    transform: rotateX(-90deg) rotateY(0deg);
-}
-
-.die.selected[data-face="5"] {
-    transform: translateY(-20px) rotateX(-90deg) rotateY(0deg);
-}
-
-.die[data-face="6"] {
-    transform: rotateX(90deg) rotateY(0deg);
-}
-
-.die.selected[data-face="6"] {
-    transform: translateY(-20px) rotateX(90deg) rotateY(0deg);
-}
-
-@keyframes roll-animation {
+@keyframes rollDie {
     0% {
-        transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg);
+        transform: rotate(0deg);
     }
 
     100% {
-        transform: rotateX(720deg) rotateY(360deg) rotateZ(180deg);
+        transform: rotate(360deg);
     }
-}
-
-/* Random variants for natural look */
-.die[data-face="1"].variant-1 {
-    transform: rotateX(0deg) rotateY(0deg) rotateZ(5deg);
-}
-
-.die.banked {
-    opacity: 0.5;
-    pointer-events: none;
-    transform: scale(0.9);
-}
-
-/* Controls */
-.controls {
-    margin-top: 2rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-}
-
-.current-action-info {
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-#action-text {
-    color: var(--text-muted);
-}
-
-#current-score-display {
-    color: var(--text-main);
-    font-size: 1.25rem;
-    font-weight: 700;
-}
-
-.button-group {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-}
-
-.btn {
-    padding: 1rem;
-    border-radius: 12px;
-    border: none;
-    font-weight: 600;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
-}
-
-.btn:active {
-    transform: scale(0.98);
-}
-
-.btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.btn.primary {
-    background-color: var(--primary);
-    color: white;
-}
-
-.btn.primary:hover:not(:disabled) {
-    background-color: var(--primary-hover);
-}
-
-.btn.secondary {
-    background-color: var(--secondary);
-    color: white;
 }
 
 .feedback-message {
@@ -487,19 +303,117 @@ h1 {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background-color: rgba(244, 63, 94, 0.9);
-    color: white;
-    padding: 1rem 2rem;
-    border-radius: 12px;
-    font-size: 2rem;
-    font-weight: 800;
-    z-index: 10;
+    font-size: 4rem;
+    font-weight: 900;
+    color: var(--danger);
+    white-space: nowrap;
+    text-shadow: 0 0 20px black;
+    z-index: 50;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     pointer-events: none;
-    animation: pop-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.feedback-message.success {
+    color: var(--success);
 }
 
 .feedback-message.hidden {
     display: none;
+}
+
+@keyframes popIn {
+    from {
+        transform: translate(-50%, -50%) scale(0);
+    }
+
+    to {
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* Controls */
+.controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    background: var(--bg-panel);
+    padding: 1.5rem;
+    border-radius: 20px;
+    border-top: var(--glass-border);
+    backdrop-filter: blur(10px);
+}
+
+.current-action-info {
+    text-align: center;
+}
+
+#action-text {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    display: block;
+}
+
+#current-score-display {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--success);
+    text-shadow: 0 0 10px rgba(0, 255, 159, 0.3);
+}
+
+.button-group {
+    display: flex;
+    gap: 1rem;
+}
+
+.btn {
+    padding: 0.8rem 2rem;
+    font-size: 1.1rem;
+    font-family: inherit;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.btn.primary {
+    background: var(--primary);
+    color: #000;
+    box-shadow: var(--neon-glow);
+}
+
+.btn.primary:hover {
+    background: #fff;
+    box-shadow: 0 0 30px var(--primary);
+}
+
+.btn.primary:disabled {
+    background: #333;
+    color: #666;
+    box-shadow: none;
+    cursor: not-allowed;
+}
+
+.btn.secondary {
+    background: transparent;
+    border: 2px solid var(--accent);
+    color: var(--accent);
+}
+
+.btn.secondary:hover {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: var(--purple-glow);
+}
+
+.btn.secondary:disabled {
+    border-color: #444;
+    color: #444;
+    cursor: not-allowed;
+    box-shadow: none;
 }
 
 /* Modals */
@@ -509,12 +423,12 @@ h1 {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(15, 23, 42, 0.9);
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
     display: flex;
     justify-content: center;
     align-items: center;
     z-index: 100;
-    backdrop-filter: blur(5px);
 }
 
 .modal.hidden {
@@ -522,94 +436,69 @@ h1 {
 }
 
 .modal-content {
-    background-color: var(--card-bg);
-    padding: 2rem;
+    background: #0f0f1a;
+    border: var(--glass-border);
+    padding: 2.5rem;
     border-radius: 16px;
     width: 90%;
     max-width: 500px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    position: relative;
 }
 
 .modal-content h2 {
+    color: var(--primary);
     margin-bottom: 1.5rem;
-    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 2px;
 }
 
 .input-group {
     margin-bottom: 1.5rem;
+    text-align: left;
 }
 
 .input-group label {
     display: block;
     margin-bottom: 0.5rem;
     color: var(--text-muted);
+    font-size: 0.9rem;
 }
 
-.input-group input {
+.input-group input,
+.input-group select {
     width: 100%;
-    padding: 1rem;
-    background-color: rgba(0, 0, 0, 0.2);
+    padding: 0.8rem;
+    background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: var(--text-main);
+    border-radius: 6px;
+    color: white;
+    font-family: inherit;
     font-size: 1rem;
 }
 
-.rules-text {
-    max-height: 60vh;
-    overflow-y: auto;
-    margin-bottom: 1.5rem;
-    font-size: 0.9rem;
-    line-height: 1.6;
-    color: var(--text-muted);
+.input-group input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: var(--neon-glow);
 }
 
-.rules-text ul {
-    margin-left: 1.5rem;
-    margin-bottom: 1rem;
+.theme-options {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
 }
 
-@keyframes pop-in {
-    from {
-        opacity: 0;
-        transform: translate(-50%, -50%) scale(0.5);
-    }
-
-    to {
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(1);
-    }
+.theme-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
-/* Animations for Dice Rotation */
-/* Note: We will inject dynamic rotation styles in JS, but we can preset some */
-.die[data-face="1"] {
-    transform: rotateX(0deg) rotateY(0deg);
+.theme-btn.active {
+    border-color: var(--primary);
+    box-shadow: var(--neon-glow);
 }
-
-.die[data-face="2"] {
-    transform: rotateX(0deg) rotateY(180deg);
-}
-
-.die[data-face="3"] {
-    transform: rotateX(0deg) rotateY(-90deg);
-}
-
-.die[data-face="4"] {
-    transform: rotateX(0deg) rotateY(90deg);
-}
-
-.die[data-face="5"] {
-    transform: rotateX(-90deg) rotateY(0deg);
-}
-
-.die[data-face="6"] {
-    transform: rotateX(90deg) rotateY(0deg);
-}
-
-/* Random variants for natural look */
-.die[data-face="1"].variant-1 {
-    transform: rotateX(0deg) rotateY(0deg) rotateZ(5deg);
-}
-
-/* ... simpler to just do cleaner rotations for now, or use JS to randomize slightly */

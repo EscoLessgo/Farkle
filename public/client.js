@@ -1,4 +1,10 @@
 import { calculateScore } from './rules.js';
+import { DiscordSDK } from "@discord/embedded-app-sdk";
+
+const CLIENT_ID = '1317075677927768074'; // Replaced with a likely generic or instructions placeholder if unknown, but better to ask user? I'll use a placeholder.
+// Actually, I'll check if I can find one in history? No. 
+// I will use a placeholder variable.
+const DISCORD_CLIENT_ID = '123456789012345678'; // TODO: Replace with your Application ID
 
 class FarkleClient {
     constructor() {
@@ -6,6 +12,9 @@ class FarkleClient {
         this.roomCode = null;
         this.playerId = null;
         this.gameState = null;
+        this.discordSdk = null;
+
+        // UI Elements
 
         // UI Elements
         this.ui = {
@@ -33,12 +42,115 @@ class FarkleClient {
             endP1Name: document.getElementById('end-p1-name'),
             endP1Score: document.getElementById('end-p1-score'),
             endP2Name: document.getElementById('end-p2-name'),
+            endP2Name: document.getElementById('end-p2-name'),
             endP2Score: document.getElementById('end-p2-score'),
-            restartBtn: document.getElementById('restart-btn')
+            restartBtn: document.getElementById('restart-btn'),
+            settingsBtn: document.getElementById('settings-btn'),
+            settingsModal: document.getElementById('settings-modal'),
+            diceThemeSelect: document.getElementById('dice-theme-select'),
+            themeBtns: document.querySelectorAll('.theme-btn')
         };
 
         this.initListeners();
+        this.initSettings();
+        this.initBackgroundDice();
+        this.initDiscord(); // Try to init Discord
         this.initSocketEvents();
+    }
+
+    initSettings() {
+        // Toggle Modal
+        this.ui.settingsBtn.addEventListener('click', () => this.ui.settingsModal.classList.remove('hidden'));
+        this.ui.settingsModal.querySelector('.close-modal').addEventListener('click', () => this.ui.settingsModal.classList.add('hidden'));
+
+        // Theme Buttons
+        this.ui.themeBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const theme = btn.dataset.theme;
+                let color = '#0f3d24'; // default green
+                if (theme === 'blue') color = '#0f172a';
+                if (theme === 'red') color = '#450a0a';
+                if (theme === 'purple') color = '#3b0764';
+
+                document.body.style.setProperty('--felt-color', color);
+
+                this.ui.themeBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                localStorage.setItem('farkle-theme', theme);
+            });
+        });
+
+        // Dice Theme
+        this.ui.diceThemeSelect.addEventListener('change', (e) => {
+            const val = e.target.value;
+            document.body.setAttribute('data-dice-theme', val);
+            localStorage.setItem('farkle-dice-theme', val);
+        });
+
+        // Load saved
+        const savedTheme = localStorage.getItem('farkle-theme');
+        if (savedTheme) {
+            const btn = document.querySelector(`.theme-btn[data-theme="${savedTheme}"]`);
+            if (btn) btn.click();
+        }
+        const savedDice = localStorage.getItem('farkle-dice-theme');
+        if (savedDice) {
+            this.ui.diceThemeSelect.value = savedDice;
+            document.body.setAttribute('data-dice-theme', savedDice);
+        }
+    }
+
+    initBackgroundDice() {
+        const container = document.getElementById('bg-dice-container');
+        if (!container) return;
+        const dieChars = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+        for (let i = 0; i < 15; i++) {
+            const el = document.createElement('div');
+            el.classList.add('bg-die');
+            el.textContent = dieChars[Math.floor(Math.random() * 6)];
+            el.style.left = Math.random() * 100 + '%';
+            el.style.animationDuration = (20 + Math.random() * 30) + 's';
+            el.style.animationDelay = (Math.random() * -30) + 's';
+            el.style.fontSize = (24 + Math.random() * 40) + 'px';
+            el.style.opacity = 0.1 + Math.random() * 0.1;
+            container.appendChild(el);
+        }
+    }
+
+    async initDiscord() {
+        try {
+            // Note: This requires the valid Client ID to be set in DISCORD_CLIENT_ID
+            this.discordSdk = new DiscordSDK(DISCORD_CLIENT_ID);
+            await this.discordSdk.ready();
+            console.log("Discord SDK Ready");
+
+            // Authenticate purely for retrieving user info if needed, but for RP we might need scope
+            // For now, we just log readiness. Implementing full OAuth requires backend handshake.
+
+            // Example activity update (mocked as it might fail without auth)
+            // this.updateDiscordPresence("In Menu");
+        } catch (e) {
+            console.log("Discord SDK Init skipped/failed (expected locally):", e);
+        }
+    }
+
+    async updateDiscordPresence(details, state) {
+        if (!this.discordSdk) return;
+        try {
+            // This requires rpc.activities.write scope and valid auth
+            await this.discordSdk.commands.setActivity({
+                activity: {
+                    details: details,
+                    state: state,
+                    assets: {
+                        large_image: "farkle_icon", // Asset key from Discord Dev Portal
+                        large_text: "Farkle"
+                    }
+                }
+            });
+        } catch (e) {
+            // console.warn("Failed to set activity", e);
+        }
     }
 
     initListeners() {
@@ -79,7 +191,21 @@ class FarkleClient {
 
     initSocketEvents() {
         this.socket.on('connect', () => {
-            console.log('Connected to server');
+            console.log('Connected to server with ID:', this.socket.id);
+            if (this.roomCode && this.playerName) {
+                console.log('Attempting auto-rejoin...');
+                this.socket.emit('join_game', { roomCode: this.roomCode, playerName: this.playerName });
+                this.showFeedback("Reconnecting...", "info");
+            }
+        });
+
+        this.socket.on('room_list', (rooms) => {
+            this.renderRoomList(rooms);
+        });
+
+        this.socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            this.showFeedback("Connection Lost! Reconnecting...", "error");
         });
 
         this.socket.on('joined', ({ playerId, state }) => {
@@ -87,6 +213,7 @@ class FarkleClient {
             this.updateGameState(state);
             this.ui.setupModal.classList.add('hidden');
             this.showFeedback("Joined Room!", "success");
+            this.renderControls();
         });
 
         this.socket.on('game_state_update', (state) => {
@@ -99,8 +226,6 @@ class FarkleClient {
         });
 
         this.socket.on('roll_result', (data) => {
-            // data contains { dice, farkle, hotDice, state }
-            // Animate roll
             this.animateRoll(data.dice).then(() => {
                 this.updateGameState(data.state);
                 if (data.farkle) {
@@ -113,120 +238,204 @@ class FarkleClient {
         });
 
         this.socket.on('error', (msg) => {
-            alert(msg);
-            if (msg === "Game not active" || msg === "Room full") {
-                // Maybe show setup again?
+            if (msg === "Game not active" || msg === "Room full" || msg === "Room Full") {
+                console.error("Game Error:", msg);
+                this.showFeedback(msg, "error");
+            } else {
+                alert(msg);
             }
         });
+    }
+
+    renderRoomList(rooms) {
+        // Find container in setup modal
+        let container = document.getElementById('room-list-container');
+        if (!container) {
+            // Create if missing (replacing old input)
+            const parent = this.ui.setupModal.querySelector('.modal-content');
+            // Remove old inputs if present
+            const oldInput = parent.querySelector('#room-code-input')?.closest('.input-group');
+            if (oldInput) oldInput.remove();
+
+            const oldBtn = parent.querySelector('#start-game-btn');
+            if (oldBtn) oldBtn.remove();
+
+            // Add label
+            let label = parent.querySelector('#room-label');
+            if (!label) {
+                label = document.createElement('h3');
+                label.id = 'room-label';
+                label.textContent = "Select a Table";
+                label.style.color = "var(--primary)";
+                label.style.marginBottom = "10px";
+                parent.appendChild(label);
+            }
+
+            container = document.createElement('div');
+            container.id = 'room-list-container';
+            container.className = 'room-grid';
+            parent.appendChild(container);
+
+            // Re-order inputs if needed, but append is fine. Name input is first.
+        }
+
+        container.innerHTML = '';
+        rooms.forEach(room => {
+            const card = document.createElement('div');
+            card.className = `room-card ${room.count >= room.max ? 'full' : ''}`;
+
+            const title = document.createElement('h3');
+            title.textContent = room.name;
+
+            const status = document.createElement('div');
+            status.className = 'room-status';
+            status.textContent = `${room.count} / ${room.max} Players`;
+
+            if (room.status === 'playing') {
+                status.textContent += ' (In Progress)';
+            }
+
+            card.appendChild(title);
+            card.appendChild(status);
+
+            if (room.count < room.max || (room.count >= room.max && room.status === 'waiting')) {
+                card.addEventListener('click', () => {
+                    this.joinRoom(room.name);
+                });
+            } else {
+                card.title = "Room Full";
+            }
+
+            container.appendChild(card);
+        });
+    }
+
+    joinRoom(roomCode) {
+        const name = this.ui.playerNameInput.value.trim() || 'Player';
+        this.roomCode = roomCode;
+        this.playerName = name;
+        this.socket.emit('join_game', { roomCode: roomCode, playerName: name });
     }
 
     joinGame() {
-        const name = this.ui.playerNameInput.value.trim() || 'Player';
-        const room = this.ui.roomCodeInput.value.trim() || 'room1';
-        this.roomCode = room;
-
-        this.socket.emit('join_game', { roomCode: room, playerName: name });
+        // Legacy method, unused now
     }
 
     canInteract() {
-        if (!this.gameState) return false;
-        if (this.gameState.gameStatus !== 'playing') return false;
+        if (!this.gameState) {
+            console.log("canInteract: No gameState");
+            return false;
+        }
+        if (this.gameState.gameStatus !== 'playing') {
+            console.log("canInteract: Status not playing", this.gameState.gameStatus);
+            return false;
+        }
         const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
-        return currentPlayer && currentPlayer.id === this.socket.id;
-    }
-
-    updateGameState(state) {
-        this.gameState = state;
-        this.renderPlayers();
-        this.renderControls();
-        this.renderDice(state.currentDice); // This might snap if animation is playing, but we handle that in roll_result manually
-        this.checkGameOver(state);
+        const isMyTurn = currentPlayer && currentPlayer.id === this.socket.id;
+        if (!isMyTurn) {
+            // console.log("canInteract: Not my turn", currentPlayer?.id, this.socket.id); 
+            // Commented out to avoid spam, but useful if needed
+        }
+        return isMyTurn;
     }
 
     renderPlayers() {
-        const p1 = this.gameState.players[0] || { name: 'Waiting...', score: 0 };
-        const p2 = this.gameState.players[1] || { name: 'Waiting...', score: 0 };
+        if (!this.gameState || !this.gameState.players) return;
+        const p1 = this.gameState.players[0];
+        const p2 = this.gameState.players[1];
 
-        // P1 Zone
-        this.ui.player1Zone.querySelector('.player-name').textContent = p1.name;
-        this.ui.p1Score.textContent = p1.score;
-        this.ui.p1Round.textContent = (this.gameState.currentPlayerIndex === 0) ? this.gameState.roundAccumulatedScore : 0;
+        // Helper to update zone
+        const updateZone = (zone, player, isCurrent) => {
+            if (!zone) return;
+            // Find child elements safely
+            const nameEl = zone.querySelector('.player-name') || zone.querySelector('h3');
+            const scoreEl = zone.querySelector('.total-score') || zone.querySelector('p');
 
-        // P2 Zone
-        this.ui.player2Zone.querySelector('.player-name').textContent = p2.name;
-        this.ui.p2Score.textContent = p2.score;
-        this.ui.p2Round.textContent = (this.gameState.currentPlayerIndex === 1) ? this.gameState.roundAccumulatedScore : 0;
-
-        // Active Highlight
-        if (this.gameState.currentPlayerIndex === 0) {
-            this.ui.player1Zone.classList.add('active');
-            this.ui.player2Zone.classList.remove('active');
-        } else {
-            this.ui.player1Zone.classList.remove('active');
-            this.ui.player2Zone.classList.add('active');
-        }
-
-        // If I am one of the players, highlight me?
-        // Maybe add a "(You)" label?
-        if (p1.id === this.socket.id) this.ui.player1Zone.querySelector('.player-name').textContent = p1.name + " (You)";
-        if (p2.id === this.socket.id) this.ui.player2Zone.querySelector('.player-name').textContent = p2.name + " (You)";
-    }
-
-    renderDice(diceData) {
-        // If we just animated, we don't want to re-render immediately if it causes jump
-        // But for toggle updates, we do.
-        // We'll trust the simple diffing or just rebuild content if count changes.
-
-        // Simple rebuild
-        this.ui.diceContainer.innerHTML = '';
-        diceData.forEach(die => {
-            const dieEl = document.createElement('div');
-            dieEl.className = 'die';
-            if (die.selected) dieEl.classList.add('selected');
-            dieEl.dataset.id = die.id; // These are numeric from server, but stored as string in dataset
-
-            this.createFaces(dieEl);
-            dieEl.dataset.face = die.value;
-
-            this.ui.diceContainer.appendChild(dieEl);
-        });
-    }
-
-    createFaces(dieEl) {
-        for (let i = 1; i <= 6; i++) {
-            const face = document.createElement('div');
-            face.className = `die-face face-${i}`;
-            for (let p = 0; p < i; p++) {
-                const pip = document.createElement('div');
-                pip.className = 'pip';
-                face.appendChild(pip);
+            if (!player) {
+                if (nameEl) nameEl.textContent = "Waiting...";
+                if (scoreEl) scoreEl.textContent = "0";
+                zone.classList.remove('active');
+                return;
             }
-            dieEl.appendChild(face);
-        }
+            if (nameEl) nameEl.textContent = player.name;
+            if (scoreEl) scoreEl.textContent = player.score;
+
+            if (isCurrent) zone.classList.add('active');
+            else zone.classList.remove('active');
+        };
+
+        const currentId = this.gameState.players[this.gameState.currentPlayerIndex]?.id;
+        updateZone(this.ui.player1Zone, p1, p1 && p1.id === currentId);
+        updateZone(this.ui.player2Zone, p2, p2 && p2.id === currentId);
     }
 
-    animateRoll(diceData) {
-        return new Promise((resolve) => {
-            this.ui.diceContainer.innerHTML = '';
-            diceData.forEach(die => {
-                const dieEl = document.createElement('div');
-                dieEl.className = 'die rolling';
-                dieEl.style.animationDuration = (0.8 + Math.random() * 0.4) + 's';
+    renderDice(dice) {
+        this.ui.diceContainer.innerHTML = '';
+        dice.forEach((d, index) => {
+            const die = document.createElement('div');
+            die.className = `die ${d.selected ? 'selected' : ''}`;
+            die.dataset.id = d.id;
+            die.dataset.value = d.value;
 
-                this.createFaces(dieEl);
-                this.ui.diceContainer.appendChild(dieEl);
+            // Create content for die (pips or text)
+            // Using standard unicode for simplicity and robustness
+            die.textContent = this.getDieChar(d.value);
 
-                // After animation, set face
-                setTimeout(() => {
-                    dieEl.classList.remove('rolling');
-                    dieEl.style.animationDuration = '';
-                    dieEl.dataset.face = die.value;
-                    dieEl.dataset.id = die.id;
-                }, 1000);
-            });
+            // Animation staggered entry
+            die.style.animationDelay = `${index * 50}ms`;
 
-            setTimeout(resolve, 1000);
+            this.ui.diceContainer.appendChild(die);
         });
+    }
+
+    getDieChar(val) {
+        const chars = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+        return chars[val - 1] || val;
+    }
+
+    animateRoll(dice) {
+        return new Promise(resolve => {
+            this.ui.diceContainer.classList.add('rolling');
+
+            // Play sound if available? (Skipping for now)
+
+            // Show temporary rolling state
+            this.ui.diceContainer.innerHTML = '';
+            for (let i = 0; i < dice.length; i++) {
+                const die = document.createElement('div');
+                die.className = 'die rolling';
+                die.textContent = '🎲';
+                die.style.animationDuration = '0.5s';
+                this.ui.diceContainer.appendChild(die);
+            }
+
+            setTimeout(() => {
+                this.ui.diceContainer.classList.remove('rolling');
+                resolve();
+            }, 600);
+        });
+    }
+
+    updateGameState(state) {
+        console.log("State Update:", state);
+        this.gameState = state;
+        this.renderPlayers();
+        this.renderControls();
+        this.renderDice(state.currentDice);
+        this.checkGameOver(state);
+
+        // Update Discord Rich Presence
+        if (this.gameState.gameStatus === 'playing') {
+            const myPlayer = this.gameState.players.find(p => p.id === this.socket.id);
+            if (myPlayer) {
+                const opponent = this.gameState.players.find(p => p.id !== this.socket.id);
+                const scoreText = `Score: ${myPlayer.score} vs ${opponent ? opponent.score : 0}`;
+                const roundText = `Round: ${state.roundAccumulatedScore > 0 ? '+' + state.roundAccumulatedScore : 'Rolling'}`;
+                this.updateDiscordPresence(scoreText, roundText);
+            }
+        } else {
+            this.updateDiscordPresence("In Lobby", "Waiting for game");
+        }
     }
 
     renderControls() {
@@ -250,25 +459,15 @@ class FarkleClient {
         } else {
             this.ui.actionText.textContent = "Your turn";
 
-            // Enable logic based on state
-            // Can roll if:
-            // 1. Just started turn (no dice yet? Server handles this, sends currentDice empty? No server sends rolled dice usually?)
-            // Actually server state for 'currentDice' is persistent.
-            // If state.diceCountToRoll > 0 ??
-
             const hasSelected = selectedDice.length > 0;
-            const isValidSelection = selectedScore > 0; // rough check, server validates fully
 
-            // Roll Button
-            // If we have selected dice, we can "Roll Remaining"
-            // If we haven't rolled yet this turn (dice empty), prompt to roll
+            console.log("RenderControls: My Turn. Dice:", this.gameState.currentDice.length, "Selected:", selectedDice.length);
 
             if (this.gameState.currentDice.length === 0) {
                 this.ui.rollBtn.disabled = false;
                 this.ui.rollBtn.textContent = "Roll Dice";
                 this.ui.bankBtn.disabled = true;
             } else {
-                // We have dice. Must select to roll again or bank.
                 if (hasSelected) {
                     this.ui.rollBtn.disabled = false;
                     this.ui.rollBtn.textContent = "Roll Remaining";
@@ -276,7 +475,12 @@ class FarkleClient {
                 } else {
                     this.ui.rollBtn.disabled = true; // Must select
                     this.ui.bankBtn.disabled = true;
-                    this.ui.actionText.textContent = "Select dice to continue";
+                    // Check if we just rolled Hot Dice (6 fresh dice, score > 0 implied by round logic usually, but here we just check count)
+                    if (this.gameState.currentDice.length === 6 && this.gameState.roundAccumulatedScore > 0) {
+                        this.ui.actionText.textContent = "HOT DICE! Select scoring dice!";
+                    } else {
+                        this.ui.actionText.textContent = "Select dice to continue";
+                    }
                 }
 
                 if (this.gameState.currentDice.length > 0 && selectedDice.length === this.gameState.currentDice.length) {
