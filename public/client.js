@@ -22,12 +22,7 @@ class FarkleClient {
             diceContainer: document.getElementById('dice-container'),
             rollBtn: document.getElementById('roll-btn'),
             bankBtn: document.getElementById('bank-btn'),
-            player1Zone: document.getElementById('player1-zone'),
-            player2Zone: document.getElementById('player2-zone'),
-            p1Score: document.getElementById('player1-zone')?.querySelector('.total-score'),
-            p2Score: document.getElementById('player2-zone')?.querySelector('.total-score'),
-            p1Round: document.getElementById('p1-round'),
-            p2Round: document.getElementById('p2-round'),
+            playerZonesContainer: document.getElementById('player-zones-container'),
             actionText: document.getElementById('action-text'),
             currentScoreDisplay: document.getElementById('current-score-display'),
             feedback: document.getElementById('feedback-message'),
@@ -41,7 +36,6 @@ class FarkleClient {
             winnerText: document.getElementById('winner-text'),
             endP1Name: document.getElementById('end-p1-name'),
             endP1Score: document.getElementById('end-p1-score'),
-            endP2Name: document.getElementById('end-p2-name'),
             endP2Name: document.getElementById('end-p2-name'),
             endP2Score: document.getElementById('end-p2-score'),
             restartBtn: document.getElementById('restart-btn'),
@@ -340,32 +334,46 @@ class FarkleClient {
 
     renderPlayers() {
         if (!this.gameState || !this.gameState.players) return;
-        const p1 = this.gameState.players[0];
-        const p2 = this.gameState.players[1];
 
-        // Helper to update zone
-        const updateZone = (zone, player, isCurrent) => {
-            if (!zone) return;
-            // Find child elements safely
-            const nameEl = zone.querySelector('.player-name') || zone.querySelector('h3');
-            const scoreEl = zone.querySelector('.total-score') || zone.querySelector('p');
+        // Dynamic rendering
+        const container = this.ui.playerZonesContainer;
+        if (!container) return;
 
-            if (!player) {
-                if (nameEl) nameEl.textContent = "Waiting...";
-                if (scoreEl) scoreEl.textContent = "0";
-                zone.classList.remove('active');
-                return;
-            }
-            if (nameEl) nameEl.textContent = player.name;
-            if (scoreEl) scoreEl.textContent = player.score;
+        // Only rebuild if player count/names changed? For now, full rebuild is safer but maybe flashing?
+        // We'll trust browser optimization for now.
+        container.innerHTML = '';
 
-            if (isCurrent) zone.classList.add('active');
-            else zone.classList.remove('active');
-        };
+        this.gameState.players.forEach((player, index) => {
+            // For lobby view: show all.
+            // For game view: show all.
 
-        const currentId = this.gameState.players[this.gameState.currentPlayerIndex]?.id;
-        updateZone(this.ui.player1Zone, p1, p1 && p1.id === currentId);
-        updateZone(this.ui.player2Zone, p2, p2 && p2.id === currentId);
+            const isCurrent = this.gameState.currentPlayerIndex === index && this.gameState.gameStatus === 'playing';
+
+            const card = document.createElement('div');
+            card.className = `player-card ${isCurrent ? 'active' : ''}`;
+            card.style.minWidth = "150px";
+            if (!player.connected) card.style.opacity = "0.5";
+
+            const info = document.createElement('div');
+            info.className = 'player-info';
+
+            const name = document.createElement('span');
+            name.className = 'player-name';
+            name.textContent = player.name;
+
+            info.appendChild(name);
+
+            const scoreDiv = document.createElement('div');
+            scoreDiv.className = 'total-score';
+            scoreDiv.textContent = player.score;
+
+            // Round stats logic could be enhanced to show who just banked
+
+            card.appendChild(info);
+            card.appendChild(scoreDiv);
+
+            container.appendChild(card);
+        });
     }
 
     renderDice(dice) {
@@ -440,6 +448,47 @@ class FarkleClient {
     renderControls() {
         if (!this.gameState) return;
 
+        // Handle Waiting State
+        if (this.gameState.gameStatus === 'waiting') {
+            this.ui.currentScoreDisplay.textContent = "Waiting for players...";
+            this.ui.rollBtn.style.display = 'none';
+            this.ui.bankBtn.style.display = 'none';
+
+            // Check for existing start button or create one
+            let startBtn = document.getElementById('lobby-start-btn');
+            if (!startBtn) {
+                startBtn = document.createElement('button');
+                startBtn.id = 'lobby-start-btn';
+                startBtn.className = 'btn primary';
+                startBtn.textContent = 'Start Game';
+                startBtn.onclick = () => {
+                    this.socket.emit('start_game', { roomCode: this.roomCode });
+                };
+                // Inject into button group
+                if (this.ui.rollBtn.parentElement) {
+                    this.ui.rollBtn.parentElement.appendChild(startBtn);
+                }
+            }
+
+            if (this.gameState.players.length >= 2) {
+                startBtn.style.display = 'block';
+                startBtn.disabled = false;
+                this.ui.actionText.textContent = "Ready to start!";
+            } else {
+                startBtn.style.display = 'block';
+                startBtn.disabled = true;
+                this.ui.actionText.textContent = `Need ${2 - this.gameState.players.length} more player(s)`;
+            }
+            return;
+        }
+
+        // Playing State
+        const startBtn = document.getElementById('lobby-start-btn');
+        if (startBtn) startBtn.style.display = 'none';
+
+        this.ui.rollBtn.style.display = 'inline-block';
+        this.ui.bankBtn.style.display = 'inline-block';
+
         const isMyTurn = this.canInteract();
         const selectedDice = this.gameState.currentDice.filter(d => d.selected);
         const selectedScore = calculateScore(selectedDice.map(d => d.value));
@@ -459,8 +508,6 @@ class FarkleClient {
             this.ui.actionText.textContent = "Your turn";
 
             const hasSelected = selectedDice.length > 0;
-
-            console.log("RenderControls: My Turn. Dice:", this.gameState.currentDice.length, "Selected:", selectedDice.length);
 
             if (this.gameState.currentDice.length === 0) {
                 this.ui.rollBtn.disabled = false;

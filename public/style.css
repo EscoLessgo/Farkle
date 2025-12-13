@@ -78,6 +78,7 @@ body {
     letter-spacing: 2px;
     background: linear-gradient(90deg, var(--primary), var(--accent));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
     text-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
 }
@@ -157,12 +158,16 @@ body {
 
 .player-zones {
     display: flex;
-    justify-content: space-between;
+    justify-content: center;
     gap: 1rem;
+    flex-wrap: wrap;
+    width: 100%;
 }
 
 .player-card {
-    flex: 1;
+    flex: 0 1 auto;
+    min-width: 140px;
+    width: 200px;
     background: var(--bg-panel);
     border: var(--glass-border);
     border-radius: 12px;
