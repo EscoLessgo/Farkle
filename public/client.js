@@ -323,19 +323,18 @@ class FarkleClient {
 
     canInteract() {
         if (!this.gameState) {
-            console.log("canInteract: No gameState");
+            // console.log("canInteract: No gameState");
             return false;
         }
         if (this.gameState.gameStatus !== 'playing') {
-            console.log("canInteract: Status not playing", this.gameState.gameStatus);
+            // console.log("canInteract: Status not playing", this.gameState.gameStatus);
             return false;
         }
+        if (!this.socket || !this.socket.id) return false;
+
         const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
         const isMyTurn = currentPlayer && currentPlayer.id === this.socket.id;
-        if (!isMyTurn) {
-            // console.log("canInteract: Not my turn", currentPlayer?.id, this.socket.id); 
-            // Commented out to avoid spam, but useful if needed
-        }
+
         return isMyTurn;
     }
 
