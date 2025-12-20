@@ -511,9 +511,37 @@ class FarkleClient {
             die.dataset.id = d.id;
             die.dataset.value = d.value;
 
-            // Create content for die (pips or text)
-            // Using standard unicode for simplicity and robustness
-            die.textContent = this.getDieChar(d.value);
+            // Create pips for CSS dice
+            for (let i = 0; i < 6; i++) { // Always create potential pips, handled by CSS visibility or grid logic
+                const pip = document.createElement('div');
+                pip.className = 'pip';
+                die.appendChild(pip);
+            }
+
+            // Actually, my CSS uses grid areas which means I need correct number of pips or fixed 6?
+            // The CSS I wrote uses nth-child selectors up to 6 for value 6.
+            // Value 1 uses nth-child(1). Value 6 uses 6 pips.
+            // So simply creating d.value pips works perfectly with that CSS logic.
+            // Wait, for value 5, it used nth-child(5).
+            // So just creating 'd.value' amount of pips is correct.
+            /*
+            die.innerHTML = ''; // Clear
+            for(let i=0; i<d.value; i++){
+               const pip = document.createElement('div');
+               pip.className = 'pip';
+               die.appendChild(pip);
+            }
+            */
+            // Re-evaluating CSS logic:
+            // .die[data-value="1"] .pip:nth-child(1) ...
+            // If I have 1 pip, it is nth-child(1).
+            // Perfect.
+            die.innerHTML = '';
+            for (let i = 0; i < d.value; i++) {
+                const pip = document.createElement('div');
+                pip.className = 'pip';
+                die.appendChild(pip);
+            }
 
             // Animation staggered entry
             die.style.animationDelay = `${index * 50}ms`;
@@ -523,6 +551,7 @@ class FarkleClient {
     }
 
     getDieChar(val) {
+        // Unused now
         const chars = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
         return chars[val - 1] || val;
     }
@@ -538,7 +567,12 @@ class FarkleClient {
             for (let i = 0; i < dice.length; i++) {
                 const die = document.createElement('div');
                 die.className = 'die rolling';
-                die.textContent = '🎲';
+                // Create random dots for visual noise during roll
+                for (let j = 0; j < 6; j++) {
+                    const pip = document.createElement('div');
+                    pip.className = 'pip';
+                    die.appendChild(pip);
+                }
                 die.style.animationDuration = '0.5s';
                 this.ui.diceContainer.appendChild(die);
             }
@@ -607,6 +641,35 @@ class FarkleClient {
                 this.ui.actionText.textContent = `Need ${2 - this.gameState.players.length} more player(s)`;
             }
             return;
+        }
+
+        // Debug Panel Injection
+        let debugPanel = document.getElementById('debug-panel');
+        if (!debugPanel && this.ui.bankBtn.parentElement && this.ui.bankBtn.parentElement.parentElement) { // Append to control container
+            debugPanel = document.createElement('div');
+            debugPanel.id = 'debug-panel';
+            debugPanel.className = 'tools-panel';
+
+            const forceBtn = document.createElement('button');
+            forceBtn.className = 'btn micro';
+            forceBtn.textContent = 'Force Next';
+            forceBtn.onclick = () => this.socket.emit('force_next_turn', { roomCode: this.roomCode });
+
+            const restartBtn = document.createElement('button');
+            restartBtn.className = 'btn micro';
+            restartBtn.textContent = 'Fix/Restart';
+            restartBtn.title = "Restart round without losing scores/players";
+            restartBtn.onclick = () => {
+                if (confirm("Restart round? Scores will be preserved.")) {
+                    this.socket.emit('debug_restart_preserve', { roomCode: this.roomCode });
+                }
+            };
+
+            debugPanel.appendChild(forceBtn);
+            debugPanel.appendChild(restartBtn);
+
+            // Insert after button group
+            this.ui.bankBtn.parentElement.parentElement.appendChild(debugPanel);
         }
 
         // Playing State

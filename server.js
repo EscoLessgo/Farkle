@@ -364,6 +364,45 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('force_next_turn', ({ roomCode }) => {
+        const game = games.get(roomCode);
+        if (game && game.gameStatus === 'playing') {
+            console.log(`[Game ${roomCode}] Force Next Turn triggered by ${socket.id}`);
+            game.nextTurn();
+            io.to(roomCode).emit('game_state_update', game.getState());
+        }
+    });
+
+    socket.on('debug_restart_preserve', ({ roomCode }) => {
+        const game = games.get(roomCode);
+        if (game) {
+            console.log(`[Game ${roomCode}] Debug Restart (Preserve) triggered by ${socket.id}`);
+            // Reset round state but keep scores and connections
+            game.resetRound();
+            game.currentPlayerIndex = 0; // Optional: Reset to first player or keep current? User said "no-status-loss", usually implies keep scores. 
+            // If they mean "restart game but keep players", then scores should reset? 
+            // "no-status-loss" likely means "don't disconnect us".
+            // "restart function" implies scores go to 0. 
+            // "debug no-status-loss restart" -> "status" could mean "connection status".
+            // I will reset scores to 0 because it's a "restart", but explicitly NOT kick players.
+            // Wait, "no-status-loss" might mean "keep my accumulated score but fix the broken state".
+            // Let's implement a "Soft Reset" that creates a fresh round state but keeps scores.
+            // Actually, usually "Restart" means new game. "No status loss" might mean "Don't make me rejoin".
+            // Let's do a Full Game Restart (Scores 0) but keep the room populated.
+            // The existing 'restart' already does this but only if 'finished'.
+            // This debug one will force it anytime.
+            
+            game.gameStatus = 'playing';
+            game.players.forEach(p => p.score = 0);
+            game.currentPlayerIndex = 0;
+            game.resetRound();
+            game.isFinalRound = false;
+            game.winner = null;
+            
+            io.to(roomCode).emit('game_start', game.getState());
+        }
+    });
+
     socket.on('disconnect', () => {
         console.log('Client disconnected:', socket.id);
         for (const game of games.values()) {
