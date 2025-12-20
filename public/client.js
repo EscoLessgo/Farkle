@@ -11,6 +11,26 @@ const SCORING_RULES = {
     STRAIGHT: 1500
 };
 
+function isScoringSelection(dice) {
+    if (!dice || dice.length === 0) return false;
+    const counts = {};
+    for (const die of dice) counts[die] = (counts[die] || 0) + 1;
+
+    // Check Straight
+    if (dice.length === 6) {
+        const isStraight = (counts[1] === 1 && counts[2] === 1 && counts[3] === 1 && counts[4] === 1 && counts[5] === 1 && counts[6] === 1);
+        if (isStraight) return true;
+    }
+
+    for (let face = 1; face <= 6; face++) {
+        const count = counts[face] || 0;
+        if (count > 0) {
+            if (count < 3 && face !== 1 && face !== 5) return false;
+        }
+    }
+    return true;
+}
+
 function calculateScore(dice) {
     if (!dice || dice.length === 0) return 0;
     const counts = {};
@@ -18,13 +38,7 @@ function calculateScore(dice) {
 
     // Check Straight
     if (dice.length === 6) {
-        let isStraight = true;
-        for (let i = 1; i <= 6; i++) {
-            if (counts[i] !== 1) {
-                isStraight = false;
-                break;
-            }
-        }
+        const isStraight = (counts[1] === 1 && counts[2] === 1 && counts[3] === 1 && counts[4] === 1 && counts[5] === 1 && counts[6] === 1);
         if (isStraight) return SCORING_RULES.STRAIGHT;
     }
 
@@ -98,7 +112,7 @@ class FarkleClient {
                 rulesModal: document.getElementById('rules-modal'),
                 setupModal: document.getElementById('setup-modal'),
                 gameOverModal: document.getElementById('game-over-modal'),
-                playerNameInput: document.getElementById('player-name-input'),
+                playerNameDisplay: document.getElementById('player-name-display'),
                 winnerText: document.getElementById('winner-text'),
                 endP1Name: document.getElementById('end-p1-name'),
                 endP1Score: document.getElementById('end-p1-score'),
@@ -110,6 +124,8 @@ class FarkleClient {
                 diceThemeSelect: document.getElementById('dice-theme-select'),
                 themeBtns: document.querySelectorAll('.theme-btn')
             };
+
+            this.playerName = "Loading User...";
 
             this.debugLog("UI Elements mapped");
 
@@ -229,18 +245,27 @@ class FarkleClient {
             DiscordSDK = module.DiscordSDK;
 
             this.discordSdk = new DiscordSDK(DISCORD_CLIENT_ID);
-
-            // Timeout for ready check
-            const readyPromise = this.discordSdk.ready();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("SDK Timeout")), 5000));
-
-            await Promise.race([readyPromise, timeoutPromise]);
-
+            await this.discordSdk.ready();
             this.debugLog("Discord SDK: Ready!");
-            console.log("Discord SDK Ready");
+
+            // Authenticate
+            const auth = await this.discordSdk.commands.authenticate();
+            if (auth && auth.user) {
+                this.playerName = auth.user.global_name || auth.user.username;
+                this.debugLog(`Authenticated as ${this.playerName}`);
+
+                if (this.ui.playerNameDisplay) {
+                    this.ui.playerNameDisplay.textContent = `Playing as: ${this.playerName}`;
+                }
+            }
         } catch (e) {
             this.debugLog(`Discord SDK: ${e.message} (Skipped)`);
             console.warn("Discord SDK Init failed (expected locally):", e);
+            // Fallback for local testing
+            this.playerName = `Player ${Math.floor(Math.random() * 1000)}`;
+            if (this.ui.playerNameDisplay) {
+                this.ui.playerNameDisplay.textContent = `Testing as: ${this.playerName}`;
+            }
         }
     }
 
@@ -446,10 +471,12 @@ class FarkleClient {
     }
 
     joinRoom(roomCode) {
-        const name = this.ui.playerNameInput.value.trim() || 'Player';
+        if (!this.playerName || this.playerName === "Loading User...") {
+            this.showFeedback("Waiting for Discord name...", "info");
+            return;
+        }
         this.roomCode = roomCode;
-        this.playerName = name;
-        this.socket.emit('join_game', { roomCode: roomCode, playerName: name });
+        this.socket.emit('join_game', { roomCode: roomCode, playerName: this.playerName });
     }
 
     joinGame() {
@@ -718,7 +745,8 @@ class FarkleClient {
                 this.ui.rollBtn.textContent = "Roll Dice";
                 this.ui.bankBtn.disabled = true;
             } else {
-                if (hasSelected) {
+                const isValid = isScoringSelection(selectedDice.map(d => d.value));
+                if (isValid) {
                     this.ui.rollBtn.disabled = false;
                     this.ui.rollBtn.textContent = "Roll Remaining";
                     this.ui.bankBtn.disabled = false;
@@ -726,10 +754,10 @@ class FarkleClient {
                     this.ui.rollBtn.disabled = true; // Must select
                     this.ui.bankBtn.disabled = true;
                     // Check if we just rolled Hot Dice (6 fresh dice, score > 0 implied by round logic usually, but here we just check count)
-                    if (this.gameState.currentDice.length === 6 && this.gameState.roundAccumulatedScore > 0) {
+                    if (this.gameState.currentDice.length === 6 && this.gameState.roundAccumulatedScore > 0 && selectedDice.length === 0) {
                         this.ui.actionText.textContent = "HOT DICE! Select scoring dice!";
                     } else {
-                        this.ui.actionText.textContent = "Select dice to continue";
+                        this.ui.actionText.textContent = "Select scoring dice!";
                     }
                 }
 
