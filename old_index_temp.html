@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Farkle</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "@discord/embedded-app-sdk": "https://cdn.jsdelivr.net/npm/@discord/embedded-app-sdk@1.5.0/+esm"
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="app">
+        <div id="bg-dice-container"></div>
+        <header class="game-header">
+            <h1>Farkle</h1>
+            <button id="rules-btn" class="icon-btn" aria-label="Rules">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+            </button>
+            <button id="settings-btn" class="icon-btn" aria-label="Settings" style="margin-left: 0.5rem;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                    </path>
+                </svg>
+            </button>
+        </header>
+
+        <main class="game-board">
+            <div class="player-zones" id="player-zones-container">
+                <!-- Players injected via JS -->
+            </div>
+
+            <div class="dice-arena">
+                <div id="dice-container" class="dice-container">
+                    <!-- Dice will be injected here -->
+                </div>
+                <div id="feedback-message" class="feedback-message hidden">Farkle!</div>
+            </div>
+
+            <div class="controls">
+                <div class="current-action-info">
+                    <span id="action-text">Roll to start your turn</span>
+                    <span id="current-score-display">Roll Score: 0</span>
+                </div>
+                <div class="button-group">
+                    <button id="roll-btn" class="btn primary">Roll Dice</button>
+                    <button id="bank-btn" class="btn secondary" disabled>Bank Score</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Modals -->
+        <div id="rules-modal" class="modal hidden">
+            <div class="modal-content">
+                <h2>Rules</h2>
+                <div class="rules-text">
+                    <p><strong>Scoring:</strong></p>
+                    <ul>
+                        <li>Single 5: 50</li>
+                        <li>Single 1: 100</li>
+                        <li>Three 1s: 1000</li>
+                        <li>Three 2s: 200</li>
+                        <li>Three 3s: 300</li>
+                        <li>Three 4s: 400</li>
+                        <li>Three 5s: 500</li>
+                        <li>Three 6s: 600</li>
+                        <li>Four of a kind: 2x Triple value</li>
+                        <li>Five of a kind: 3x Triple value</li>
+                        <li>Six of a kind: 4x Triple value</li>
+                    </ul>
+                    <p><strong>Gameplay:</strong></p>
+                    <p>Roll the dice. Select scoring dice to accumulate points. You must select at least one scoring die
+                        after each roll to continue or bank.</p>
+                    <p><strong>Hot Dice:</strong> If you use all 6 dice, you can roll all 6 again!</p>
+                    <p><strong>Farkle:</strong> If you roll and get no scoring dice, you lose your round score.</p>
+                    <p><strong>Win:</strong> First to 10,000 points. The other player gets one last turn.</p>
+                </div>
+                <button class="btn close-modal">Close</button>
+            </div>
+        </div>
+
+        <div id="setup-modal" class="modal">
+            <div class="modal-content">
+                <h2>Join Table</h2>
+                <div class="input-group">
+                    <label>Your Name</label>
+                    <input type="text" id="player-name-input" value="Player 1" placeholder="Enter name">
+                </div>
+                <!-- Room List will be injected here -->
+                <div id="room-list-container" class="room-grid">
+                    <p style="color:var(--text-muted);">Loading tables...</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="settings-modal" class="modal hidden">
+            <div class="modal-content">
+                <h2>Settings</h2>
+                <div class="input-group">
+                    <label>Felt Color</label>
+                    <div class="theme-options">
+                        <button class="theme-btn" data-theme="green" style="background: #0f3d24;"></button>
+                        <button class="theme-btn" data-theme="blue" style="background: #1e3a8a;"></button>
+                        <button class="theme-btn" data-theme="red" style="background: #7f1d1d;"></button>
+                        <button class="theme-btn" data-theme="purple" style="background: #581c87;"></button>
+                    </div>
+                </div>
+                <div class="input-group">
+                    <label>Dice Theme</label>
+                    <select id="dice-theme-select">
+                        <option value="classic">Classic White</option>
+                        <option value="gold">Luxury Gold</option>
+                        <option value="dark">Midnight Black</option>
+                        <option value="neon">Neon Cyber</option>
+                    </select>
+                </div>
+                <button class="btn close-modal">Close</button>
+            </div>
+        </div>
+
+        <div id="game-over-modal" class="modal hidden">
+            <div class="modal-content">
+                <h2>Game Over!</h2>
+                <p id="winner-text">Player 1 Wins!</p>
+                <div class="final-scores">
+                    <div class="final-score-row">
+                        <span id="end-p1-name"></span>: <span id="end-p1-score"></span>
+                    </div>
+                    <div class="final-score-row">
+                        <span id="end-p2-name"></span>: <span id="end-p2-score"></span>
+                    </div>
+                </div>
+                <button id="restart-btn" class="btn primary">Play Again</button>
+            </div>
+        </div>
+    </div>
+
+    <footer style="text-align: center; margin-top: 2rem; color: var(--text-muted); font-size: 0.8rem;">
+        <p>
+            <a href="privacy.html" style="color: var(--text-muted); text-decoration: none;">Privacy Policy</a> |
+            <a href="terms.html" style="color: var(--text-muted); text-decoration: none;">Terms of Service</a>
+        </p>
+    </footer>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="client.js"></script>
+</body>
+
+</html>

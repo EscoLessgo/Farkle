@@ -124,25 +124,26 @@ class FarkleClient {
                 rulesModal: document.getElementById('rules-modal'),
                 setupModal: document.getElementById('setup-modal'),
                 gameOverModal: document.getElementById('game-over-modal'),
-                playerNameDisplay: document.getElementById('player-name-display'),
-                winnerText: document.getElementById('winner-text'),
                 endP1Name: document.getElementById('end-p1-name'),
                 endP1Score: document.getElementById('end-p1-score'),
                 endP2Name: document.getElementById('end-p2-name'),
                 endP2Score: document.getElementById('end-p2-score'),
+                winnerText: document.getElementById('winner-text'),
                 restartBtn: document.getElementById('restart-btn'),
                 settingsBtn: document.getElementById('settings-btn'),
                 settingsModal: document.getElementById('settings-modal'),
                 diceThemeSelect: document.getElementById('dice-theme-select'),
                 themeBtns: document.querySelectorAll('.theme-btn'),
-                threeCanvasContainer: document.getElementById('three-canvas-container')
+                threeCanvasContainer: document.getElementById('three-canvas-container'),
+                playerIdInput: document.getElementById('player-id-input'),
+                roomCodeInput: document.getElementById('room-code-input'),
+                startGameBtn: document.getElementById('start-game-btn')
             };
 
-            this.playerName = "Loading User...";
-
-            this.debugLog("UI Elements mapped");
+            this.playerName = null;
 
             this.dice3D = new Dice3DManager(this.ui.threeCanvasContainer);
+
             try { this.initListeners(); } catch (e) { console.error("Listeners Init Failed", e); }
             try { this.initSettings(); } catch (e) { console.error("Settings Init Failed", e); }
             try { this.initGSAPBackground(); } catch (e) { console.error("GSAP Init Failed", e); }
@@ -343,37 +344,9 @@ class FarkleClient {
     }
 
     async initDiscord() {
-        try {
-            this.debugLog("Discord SDK: Loading...");
-            const module = await import("@discord/embedded-app-sdk");
-            DiscordSDK = module.DiscordSDK;
-
-            this.discordSdk = new DiscordSDK(DISCORD_CLIENT_ID);
-
-            // Timeout after 3 seconds if ready() or authenticate() hangs
-            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3000));
-
-            await Promise.race([this.discordSdk.ready(), timeout]);
-            this.debugLog("Discord SDK: Ready!");
-
-            const auth = await Promise.race([this.discordSdk.commands.authenticate(), timeout]);
-            if (auth && auth.user) {
-                this.playerName = auth.user.global_name || auth.user.username;
-                this.debugLog(`Authenticated as ${this.playerName}`);
-                if (this.ui.playerNameDisplay) {
-                    this.ui.playerNameDisplay.textContent = `Playing as: ${this.playerName}`;
-                }
-            }
-        } catch (e) {
-            this.debugLog(`Discord: ${e.message}. Using fallback.`);
-            console.warn("Discord SDK Init failed or timed out:", e);
-
-            // Fallback for local testing or timeout
-            this.playerName = `Player ${Math.floor(Math.random() * 1000)}`;
-            if (this.ui.playerNameDisplay) {
-                this.ui.playerNameDisplay.textContent = `Testing as: ${this.playerName}`;
-            }
-        }
+        // Disabled as requested: "i dont care about getting the discord usernames of the players rn"
+        this.debugLog("Discord Integration: Manual Mode");
+        this.playerName = `Player ${Math.floor(Math.random() * 1000)}`;
     }
 
     async updateDiscordPresence(details, state) {
@@ -423,7 +396,7 @@ class FarkleClient {
         this.ui.rulesBtn.addEventListener('click', () => this.ui.rulesModal.classList.remove('hidden'));
         this.ui.rulesModal.querySelector('.close-modal').addEventListener('click', () => this.ui.rulesModal.classList.add('hidden'));
 
-        // this.ui.startGameBtn.addEventListener('click', () => this.joinGame());
+        this.ui.startGameBtn.addEventListener('click', () => this.joinGame());
 
         this.ui.restartBtn.addEventListener('click', () => {
             this.socket.emit('restart', { roomCode: this.roomCode });
@@ -527,41 +500,15 @@ class FarkleClient {
             return;
         }
 
-        // Find container in setup modal
-        let container = document.getElementById('room-list-container');
-        if (!container) {
-            // Create if missing (replacing old input)
-            const parent = this.ui.setupModal.querySelector('.modal-content');
-            // Remove old inputs if present
-            const oldInput = parent.querySelector('#room-code-input')?.closest('.input-group');
-            if (oldInput) oldInput.remove();
-
-            const oldBtn = parent.querySelector('#start-game-btn');
-            if (oldBtn) oldBtn.remove();
-
-            // Add label
-            let label = parent.querySelector('#room-label');
-            if (!label) {
-                label = document.createElement('h3');
-                label.id = 'room-label';
-                label.textContent = "Select a Table";
-                label.style.color = "var(--primary)";
-                label.style.marginBottom = "10px";
-                parent.appendChild(label);
-            }
-
-            container = document.createElement('div');
-            container.id = 'room-list-container';
-            container.className = 'room-grid';
-            parent.appendChild(container);
-        }
+        const container = document.getElementById('room-list-container');
+        if (!container) return;
 
         if (rooms.length === 0) {
-            container.innerHTML = '<p style="color:var(--text-muted); padding: 2rem; text-align: center;">No rooms available. Please wait...</p>';
+            container.innerHTML = '<p style="color:var(--text-muted); padding: 1rem; text-align: center; font-size: 0.8rem;">No active public tables.</p>';
             return;
         }
 
-        container.innerHTML = '';
+        container.innerHTML = '<p style="color:var(--text-muted); font-size: 0.8rem; grid-column: 1/-1; margin-bottom: 0.5rem;">Or select active table:</p>';
         rooms.forEach(room => {
             const card = document.createElement('div');
             card.className = `room-card ${room.count >= room.max ? 'full' : ''}`;
@@ -582,6 +529,7 @@ class FarkleClient {
 
             if (room.count < room.max || (room.count >= room.max && room.status === 'waiting')) {
                 card.addEventListener('click', () => {
+                    this.ui.roomCodeInput.value = room.name;
                     this.joinRoom(room.name);
                 });
             } else {
@@ -593,16 +541,22 @@ class FarkleClient {
     }
 
     joinRoom(roomCode) {
-        if (!this.playerName || this.playerName === "Loading User...") {
-            this.showFeedback("Waiting for Discord name...", "info");
-            return;
-        }
+        const id = this.ui.playerIdInput.value.trim() || '1';
+        this.playerName = `Player ${id}`;
         this.roomCode = roomCode;
         this.socket.emit('join_game', { roomCode: roomCode, playerName: this.playerName });
     }
 
     joinGame() {
-        // Legacy method, unused now
+        const id = this.ui.playerIdInput.value.trim() || '1';
+        const room = this.ui.roomCodeInput.value.trim() || 'room1';
+
+        // Using the requested name assignment: Player + ID
+        this.playerName = `Player ${id}`;
+        this.roomCode = room;
+
+        this.debugLog(`Joining room ${room} as ${this.playerName}`);
+        this.socket.emit('join_game', { roomCode: room, playerName: this.playerName });
     }
 
     canInteract() {

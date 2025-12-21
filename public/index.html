@@ -163,13 +163,21 @@
 
         <div id="setup-modal" class="modal">
             <div class="modal-content">
-                <h2>Join Table</h2>
-                <p id="player-name-display"
-                    style="color:var(--primary); font-size: 1.2rem; margin-bottom: 1rem; text-align: center;">Loading
-                    Discord Name...</p>
-                <!-- Room List will be injected here -->
-                <div id="room-list-container" class="room-grid">
-                    <p style="color:var(--text-muted);">Loading tables...</p>
+                <h2>Join Game</h2>
+                <div class="input-group">
+                    <label>Player ID (Number)</label>
+                    <input type="number" id="player-id-input" placeholder="Enter ID" value="1">
+                </div>
+                <div class="input-group">
+                    <label>Room Code</label>
+                    <input type="text" id="room-code-input" placeholder="Enter Room" value="room1">
+                </div>
+                <button id="start-game-btn" class="btn primary">Join Game</button>
+
+                <div id="room-list-container" class="room-grid"
+                    style="margin-top: 1.5rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem;">
+                    <p style="color:var(--text-muted); font-size: 0.8rem;">Or select active table:</p>
+                    <!-- Room List will be injected here -->
                 </div>
             </div>
         </div>
