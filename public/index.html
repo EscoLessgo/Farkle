@@ -12,7 +12,10 @@
     <script type="importmap">
         {
             "imports": {
-                "@discord/embedded-app-sdk": "https://cdn.jsdelivr.net/npm/@discord/embedded-app-sdk@1.5.0/+esm"
+                "@discord/embedded-app-sdk": "https://cdn.jsdelivr.net/npm/@discord/embedded-app-sdk@1.5.0/+esm",
+                "three": "https://esm.sh/three@0.160.0",
+                "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/",
+                "cannon-es": "https://esm.sh/cannon-es@0.20.0"
             }
         }
     </script>
@@ -22,7 +25,12 @@
     <div id="app">
         <div id="bg-dice-container"></div>
         <header class="game-header">
-            <h1>Farkle</h1>
+            <div class="logo-container">
+                <h1 class="logo-text">AlphaBee</h1>
+                <div class="tagline">
+                    <span class="arrow-icon">↳</span> BY VELARIX
+                </div>
+            </div>
             <button id="rules-btn" class="icon-btn" aria-label="Rules">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"></circle>
@@ -47,8 +55,9 @@
             </div>
 
             <div class="dice-arena">
+                <div id="three-canvas-container"></div>div>
                 <div id="dice-container" class="dice-container">
-                    <!-- Dice will be injected here -->
+                    <!-- Dice will be injected here (2D fallback/selection) -->
                 </div>
                 <div id="feedback-message" class="feedback-message hidden">Farkle!</div>
             </div>
@@ -98,7 +107,9 @@
         <div id="setup-modal" class="modal">
             <div class="modal-content">
                 <h2>Join Table</h2>
-                <p id="player-name-display" style="color:var(--primary); font-size: 1.2rem; margin-bottom: 1rem; text-align: center;">Loading Discord Name...</p>
+                <p id="player-name-display"
+                    style="color:var(--primary); font-size: 1.2rem; margin-bottom: 1rem; text-align: center;">Loading
+                    Discord Name...</p>
                 <!-- Room List will be injected here -->
                 <div id="room-list-container" class="room-grid">
                     <p style="color:var(--text-muted);">Loading tables...</p>

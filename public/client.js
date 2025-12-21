@@ -1,3 +1,7 @@
+import * as THREE from "three";
+import { RoundedBoxGeometry } from "https://esm.sh/three@0.160.0/examples/jsm/geometries/RoundedBoxGeometry.js";
+import * as CANNON from "cannon-es";
+
 // Game Rules (Merged from rules.js to avoid module resolution issues)
 const SCORING_RULES = {
     TRIPLE_1: 1000,
@@ -122,13 +126,15 @@ class FarkleClient {
                 settingsBtn: document.getElementById('settings-btn'),
                 settingsModal: document.getElementById('settings-modal'),
                 diceThemeSelect: document.getElementById('dice-theme-select'),
-                themeBtns: document.querySelectorAll('.theme-btn')
+                themeBtns: document.querySelectorAll('.theme-btn'),
+                threeCanvasContainer: document.getElementById('three-canvas-container')
             };
 
             this.playerName = "Loading User...";
 
             this.debugLog("UI Elements mapped");
 
+            this.dice3D = new Dice3DManager(this.ui.threeCanvasContainer);
             this.initListeners();
             this.initSettings();
             this.initBackgroundDice();
@@ -378,7 +384,8 @@ class FarkleClient {
         });
 
         this.socket.on('roll_result', (data) => {
-            this.animateRoll(data.dice).then(() => {
+            const diceValues = data.dice.map(d => d.value);
+            this.dice3D.roll(diceValues).then(() => {
                 this.updateGameState(data.state);
                 if (data.farkle) {
                     this.showFeedback("FARKLE!", "error");
@@ -798,11 +805,260 @@ class FarkleClient {
         if (!this.ui.feedback) return;
         this.ui.feedback.textContent = text;
         this.ui.feedback.classList.remove('hidden');
+        if (type === 'error') this.ui.feedback.classList.add('error');
+        else if (type === 'success') this.ui.feedback.classList.add('success');
+        else {
+            this.ui.feedback.classList.remove('error', 'success');
+        }
+
         setTimeout(() => {
             this.ui.feedback.classList.add('hidden');
-        }, 1500);
+        }, 2000);
     }
 }
 
-// Instantiate immediately since we are a module script (loaded after parsing)
+class Dice3DManager {
+    constructor(container) {
+        if (!container) return;
+        this.container = container;
+        this.diceObjects = [];
+        this.isRunning = false;
+        this.targetValues = [];
+        this.resolveRoll = null;
+        this.rollStartTime = 0;
+        this.palette = [
+            "#EAA14D", "#E05A47", "#4D9BEA", "#5FB376",
+            "#D869A8", "#F2C94C", "#9B51E0", "#FFFFFF"
+        ];
+
+        this.faceNormals = [
+            new THREE.Vector3(1, 0, 0),  // 1
+            new THREE.Vector3(-1, 0, 0), // 6
+            new THREE.Vector3(0, 1, 0),  // 2
+            new THREE.Vector3(0, -1, 0), // 5
+            new THREE.Vector3(0, 0, 1),  // 3
+            new THREE.Vector3(0, 0, -1)  // 4
+        ];
+        this.faceValues = [1, 6, 2, 5, 3, 4];
+
+        this.init();
+    }
+
+    init() {
+        const width = this.container.clientWidth || 600;
+        const height = this.container.clientHeight || 400;
+        const aspect = width / height;
+        const FRUSTUM = 20;
+
+        this.scene = new THREE.Scene();
+
+        // Orthographic camera for that arcade look from the CodePen
+        this.camera = new THREE.OrthographicCamera(
+            -FRUSTUM * aspect / 2, FRUSTUM * aspect / 2,
+            FRUSTUM / 2, -FRUSTUM / 2,
+            1, 1000
+        );
+        this.camera.position.set(40, 40, 40);
+        this.camera.lookAt(0, 0, 0);
+
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.renderer.setSize(width, height);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.domElement.style.touchAction = 'none';
+        this.container.appendChild(this.renderer.domElement);
+
+        this.world = new CANNON.World();
+        this.world.gravity.set(0, -60, 0); // Stronger gravity for "quick" feel
+        this.world.allowSleep = true;
+
+        const floorMat = new CANNON.Material();
+        const floorBody = new CANNON.Body({ mass: 0, material: floorMat });
+        floorBody.addShape(new CANNON.Plane());
+        floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+        this.world.addBody(floorBody);
+
+        const wallMat = new CANNON.Material();
+        const wallDist = 12;
+        const createWall = (x, z, rot) => {
+            const body = new CANNON.Body({ mass: 0, material: wallMat });
+            body.addShape(new CANNON.Plane());
+            body.position.set(x, 0, z);
+            body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), rot);
+            this.world.addBody(body);
+        };
+        createWall(wallDist, 0, -Math.PI / 2);
+        createWall(-wallDist, 0, Math.PI / 2);
+        createWall(0, -wallDist, 0);
+        createWall(0, wallDist, Math.PI);
+
+        this.diceMat = new CANNON.Material();
+        this.world.addContactMaterial(new CANNON.ContactMaterial(floorMat, this.diceMat, { friction: 0.2, restitution: 0.4 }));
+        this.world.addContactMaterial(new CANNON.ContactMaterial(wallMat, this.diceMat, { friction: 0.1, restitution: 0.6 }));
+
+        this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+        const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+        dir.position.set(10, 20, 10);
+        this.scene.add(dir);
+
+        this.animate();
+
+        window.addEventListener('resize', () => {
+            const w = this.container.clientWidth;
+            const h = this.container.clientHeight;
+            const asp = w / h;
+            this.camera.left = -FRUSTUM * asp / 2;
+            this.camera.right = FRUSTUM * asp / 2;
+            this.camera.top = FRUSTUM / 2;
+            this.camera.bottom = -FRUSTUM / 2;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(w, h);
+        });
+    }
+
+    createDiceTexture(number, color = "#ffffff") {
+        const size = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, size, size);
+
+        const isWhite = (color.toLowerCase() === "#ffffff" || color.toLowerCase() === "white");
+        ctx.fillStyle = isWhite ? "#E03E3E" : "#ffffff";
+        if (number !== 1 && number !== 4 && isWhite) ctx.fillStyle = "#331e18";
+
+        const dot = (x, y, r) => {
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+        };
+
+        const c = size / 2, q1 = size / 4, q3 = size * 3 / 4;
+        const dotSize = 25;
+        const bigDot = 35;
+
+        if (number === 1) dot(c, c, bigDot);
+        else if (number === 2) { dot(q1, q1, dotSize); dot(q3, q3, dotSize); }
+        else if (number === 3) { dot(q1, q1, dotSize); dot(c, c, dotSize); dot(q3, q3, dotSize); }
+        else if (number === 4) { dot(q1, q1, dotSize); dot(q3, q1, dotSize); dot(q1, q3, dotSize); dot(q3, q3, dotSize); }
+        else if (number === 5) { dot(q1, q1, dotSize); dot(q3, q1, dotSize); dot(c, c, dotSize); dot(q1, q3, dotSize); dot(q3, q3, dotSize); }
+        else if (number === 6) { dot(q1, q1, dotSize); dot(q3, q1, dotSize); dot(q1, c, dotSize); dot(q3, c, dotSize); dot(q1, q3, dotSize); dot(q3, q3, dotSize); }
+
+        return new THREE.CanvasTexture(canvas);
+    }
+
+    roll(values) {
+        return new Promise(resolve => {
+            this.targetValues = values;
+            this.resolveRoll = resolve;
+            this.clearDice();
+            this.spawnDice(values);
+            this.isRunning = true;
+            this.rollStartTime = Date.now();
+
+            setTimeout(() => { if (this.isRunning) this.stopRoll(); }, 3500);
+        });
+    }
+
+    clearDice() {
+        this.diceObjects.forEach(obj => { this.scene.remove(obj.mesh); this.world.removeBody(obj.body); });
+        this.diceObjects = [];
+    }
+
+    spawnDice(values) {
+        const theme = document.body.getAttribute('data-dice-theme') || 'classic';
+        const geom = new RoundedBoxGeometry(2.2, 2.2, 2.2, 4, 0.4);
+
+        values.forEach((val, i) => {
+            let diceColor = "#ffffff";
+            if (theme === 'classic') diceColor = this.palette[i % this.palette.length];
+            else if (theme === 'gold') diceColor = "#ffd700";
+            else if (theme === 'dark') diceColor = "#111111";
+
+            const materials = [];
+            for (let j = 1; j <= 6; j++) {
+                materials.push(new THREE.MeshStandardMaterial({
+                    map: this.createDiceTexture(j, diceColor),
+                    roughness: 0.3,
+                    metalness: theme === 'gold' ? 0.7 : 0.1
+                }));
+            }
+            const matArray = [materials[0], materials[5], materials[1], materials[4], materials[2], materials[3]];
+
+            const mesh = new THREE.Mesh(geom, matArray);
+            this.scene.add(mesh);
+
+            const shape = new CANNON.Box(new CANNON.Vec3(1.1, 1.1, 1.1));
+            const body = new CANNON.Body({
+                mass: 5,
+                shape: shape,
+                material: this.diceMat,
+                position: new CANNON.Vec3((Math.random() - 0.5) * 5, 15 + i * 2, (Math.random() - 0.5) * 5)
+            });
+
+            body.velocity.set((Math.random() - 0.5) * 20, -30, (Math.random() - 0.5) * 20);
+            body.angularVelocity.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40);
+
+            this.world.addBody(body);
+            this.diceObjects.push({ mesh, body, targetVal: val });
+        });
+    }
+
+    checkStopped() {
+        if (!this.isRunning) return;
+        let allStopped = true;
+        this.diceObjects.forEach(obj => {
+            if (obj.body.velocity.lengthSquared() > 0.2 || obj.body.angularVelocity.lengthSquared() > 0.2) allStopped = false;
+        });
+        if (allStopped && Date.now() - this.rollStartTime > 1000) this.stopRoll();
+    }
+
+    stopRoll() {
+        if (!this.isRunning) return;
+        this.isRunning = false;
+        this.diceObjects.forEach(obj => { this.alignDie(obj); obj.body.sleep(); });
+        if (this.resolveRoll) {
+            const res = this.resolveRoll;
+            this.resolveRoll = null;
+            setTimeout(res, 600);
+        }
+    }
+
+    alignDie(obj) {
+        const bodyQ = obj.body.quaternion;
+        const targetVal = obj.targetVal;
+        let bestIndex = 0;
+        let maxUp = -1;
+        for (let i = 0; i < this.faceNormals.length; i++) {
+            const normal = this.faceNormals[i].clone().applyQuaternion(bodyQ);
+            if (normal.y > maxUp) { maxUp = normal.y; bestIndex = i; }
+        }
+        let targetIndex = this.faceValues.indexOf(targetVal);
+        if (targetIndex !== bestIndex) {
+            const from = this.faceNormals[targetIndex];
+            const to = this.faceNormals[bestIndex];
+            const correction = new THREE.Quaternion().setFromUnitVectors(from, to);
+            obj.mesh.quaternion.copy(bodyQ).multiply(correction);
+        } else {
+            obj.mesh.quaternion.copy(bodyQ);
+        }
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+        if (this.isRunning) {
+            this.world.step(1 / 60);
+            this.diceObjects.forEach(obj => {
+                obj.mesh.position.copy(obj.body.position);
+                obj.mesh.quaternion.copy(obj.body.quaternion);
+            });
+            this.checkStopped();
+        }
+        this.renderer.render(this.scene, this.camera);
+    }
+}
+
+// Instantiate immediately since we are a module script
 window.farkle = new FarkleClient();
