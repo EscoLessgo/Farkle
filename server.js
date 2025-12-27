@@ -44,11 +44,25 @@ class GameState {
 
         this.gameStatus = 'waiting';
         this.winner = null;
+        this.hostId = null; // Track Host
     }
 
-    addPlayer(id, name) {
+    addPlayer(id, name, reconnectToken) {
         if (this.players.length >= 10) return false;
-        this.players.push({ id, name, score: 0, connected: true, farkles: 0, hasOpened: false });
+        // Assign host if first player (or if host left and this is first new joiner, though logic handles host migration on leave)
+        if (this.players.length === 0) {
+            this.hostId = id;
+        }
+        this.players.push({
+            id,
+            name,
+            score: 0,
+            connected: true,
+            farkles: 0,
+            hasOpened: false,
+            reconnectToken: reconnectToken || null,
+            missedTurns: 0
+        });
         return true;
     }
 
@@ -60,7 +74,14 @@ class GameState {
 
     removePlayer(id) {
         const p = this.players.find(p => p.id === id);
-        if (p) p.connected = false;
+        if (p) {
+            p.connected = false;
+            // If host left, reassign host to next connected player
+            if (this.hostId === id) {
+                const nextHost = this.players.find(pl => pl.connected && pl.id !== id);
+                this.hostId = nextHost ? nextHost.id : null;
+            }
+        }
         this.spectators = this.spectators.filter(s => s !== id);
     }
 
@@ -184,7 +205,7 @@ class GameState {
             dice: newDice,
             farkle,
             roundScore: this.roundAccumulatedScore,
-            hotDice: (this.diceCountToRoll === 6 && !farkle)
+            hotDice: (this.diceCountToRoll === 6 && !farkle && !isFirstRollOfTurn)
         };
     }
 
@@ -270,10 +291,45 @@ class GameState {
 
     nextTurn() {
         let attempts = 0;
+        let p;
+
         do {
             this.currentPlayerIndex = (this.currentPlayerIndex + 1) % this.players.length;
+            p = this.players[this.currentPlayerIndex];
+
+            if (!p.connected) {
+                p.missedTurns = (p.missedTurns || 0) + 1;
+                console.log(`[Game ${this.roomCode}] Player ${p.name} missed turn ${p.missedTurns}/3`);
+                if (p.missedTurns >= 3) {
+                    console.log(`[Game ${this.roomCode}] Kicking ${p.name} for inactivity.`);
+                    // Remove from array. 
+                    // Adjust index if needed since we are modifying array while iterating? 
+                    // We are just rotating index, so splicing at index implies current index is now next player.
+                    // But we are in a loop looking for connected player.
+                    this.players.splice(this.currentPlayerIndex, 1);
+                    // Decrement index so next loop increment hits the correct next player
+                    this.currentPlayerIndex--;
+
+                    // Check if empty
+                    if (this.players.length === 0) {
+                        this.gameStatus = 'waiting';
+                        this.resetRound();
+                        return;
+                    }
+                }
+            } else {
+                // If connected, reset missed turns? usually yes.
+                p.missedTurns = 0;
+            }
+
             attempts++;
-        } while (!this.players[this.currentPlayerIndex].connected && attempts < this.players.length);
+        } while ((!p || !p.connected) && attempts < this.players.length + 5);
+        // +5 safety buffer for splicing logic
+
+        if (this.players.length < 2 && this.gameStatus === 'playing') {
+            // Not enough players to continue? Or just wait?
+            // Usually wait or keep playing solo? For now, keep state but maybe warn.
+        }
 
         this.resetRound();
 
@@ -313,7 +369,8 @@ class GameState {
             winner: this.winner,
             isFinalRound: this.isFinalRound,
             canHighStakes: this.canHighStakes,
-            rules: this.rules
+            rules: this.rules,
+            hostId: this.hostId
         };
     }
 }
@@ -336,8 +393,33 @@ io.on('connection', (socket) => {
             let roomCode = requestedRoom && games.has(requestedRoom) ? requestedRoom : 'Classic 1';
             let game = games.get(roomCode);
 
-            // Checking if already in as player
-            let existingPlayer = game.players.find(p => p.id === socket.id);
+            // Checking if already in as player (Reconnect Logic)
+            let existingPlayer = null;
+
+            // Check by reconnectToken first
+            const token = data?.reconnectToken;
+            if (token) {
+                existingPlayer = game.players.find(p => p.reconnectToken === token && !p.connected);
+                if (existingPlayer) {
+                    console.log(`[Game ${roomCode}] Player Reconnected: ${existingPlayer.name}`);
+                    existingPlayer.id = socket.id; // Update socket ID
+                    existingPlayer.connected = true;
+                    existingPlayer.missedTurns = 0; // Reset AFK counter
+                    socket.join(roomCode);
+
+                    // Restore host if needed
+                    if (!game.hostId || !game.players.find(p => p.id === game.hostId && p.connected)) {
+                        game.hostId = existingPlayer.id;
+                    }
+
+                    socket.emit('joined', { playerId: socket.id, state: game.getState(), isSpectator: false });
+                    io.to(roomCode).emit('game_state_update', game.getState());
+                    return;
+                }
+            }
+
+            // Fallback: Check strictly by socket ID (unlikely on refresh, but good for same-session re-joins)
+            existingPlayer = game.players.find(p => p.id === socket.id);
             if (existingPlayer) {
                 existingPlayer.connected = true;
                 socket.join(roomCode);
@@ -355,12 +437,14 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            let name;
-            for (let i = 1; i <= 10; i++) {
-                let candidate = `Player ${i}`;
-                if (!game.players.some(p => p.name === candidate)) {
-                    name = candidate;
-                    break;
+            let name = data?.name;
+            if (!name) {
+                for (let i = 1; i <= 10; i++) {
+                    let candidate = `Player ${i}`;
+                    if (!game.players.some(p => p.name === candidate)) {
+                        name = candidate;
+                        break;
+                    }
                 }
             }
 
@@ -369,7 +453,7 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            game.addPlayer(socket.id, name);
+            game.addPlayer(socket.id, name, data?.reconnectToken);
             socket.join(roomCode);
             socket.emit('joined', { playerId: socket.id, state: game.getState(), isSpectator: false });
             io.to(roomCode).emit('game_state_update', game.getState());
@@ -434,10 +518,11 @@ io.on('connection', (socket) => {
             });
 
             if (result.farkle) {
+                const delay = (game.rules.category === 'speed') ? 1000 : 2500;
                 setTimeout(() => {
                     game.farkle();
                     io.to(roomCode).emit('game_state_update', game.getState());
-                }, 3000);
+                }, delay);
             }
         }
     });
@@ -470,7 +555,14 @@ io.on('connection', (socket) => {
     socket.on('restart', ({ roomCode }) => {
         const game = games.get(roomCode);
         if (game && game.gameStatus === 'finished') {
-            // Only players can restart? Or anyone? Let's say anyone for now
+            // Only players can restart? Or anyone?
+            // Host only restriction
+            const gameHost = game.hostId;
+            if (gameHost !== socket.id) {
+                socket.emit('error', "Only Host can restart");
+                return;
+            }
+
             game.gameStatus = 'playing';
             game.players.forEach(p => { p.score = 0; p.farkles = 0; p.hasOpened = false; });
             game.currentPlayerIndex = 0;
@@ -484,6 +576,7 @@ io.on('connection', (socket) => {
     socket.on('force_next_turn', ({ roomCode }) => {
         const game = games.get(roomCode);
         if (game && game.gameStatus === 'playing') {
+            if (game.hostId !== socket.id) return; // Only host
             game.nextTurn();
             io.to(roomCode).emit('game_state_update', game.getState());
         }
@@ -492,6 +585,7 @@ io.on('connection', (socket) => {
     socket.on('debug_restart_preserve', ({ roomCode }) => {
         const game = games.get(roomCode);
         if (game) {
+            if (game.hostId !== socket.id) return; // Only host
             game.gameStatus = 'playing';
             game.players.forEach(p => p.score = 0);
             game.currentPlayerIndex = 0;
@@ -532,74 +626,77 @@ io.on('connection', (socket) => {
 const games = new Map();
 
 // 1. Speed Run Mode (6000 pts)
+// 1. Speed Run Mode
 games.set('Speed 1', new GameState('Speed 1', {
     ...DEFAULT_RULES,
-    winScore: 6000,
-    openingScore: 500,
+    winScore: 5000,
+    openingScore: 0,
     category: 'speed',
-    description: "Speed Run • 6,000 Pts"
+    description: "Blitz • 5k Win • No Opening Req"
 }));
 games.set('Speed 2', new GameState('Speed 2', {
     ...DEFAULT_RULES,
-    winScore: 6000,
+    winScore: 7500,
     openingScore: 500,
     category: 'speed',
-    description: "Speed Run • 6,000 Pts"
+    description: "Race • 7.5k Win • Standard"
 }));
 
-// 2. Casual Standard (10,000 pts)
+// 2. Casual Standard
 games.set('Classic 1', new GameState('Classic 1', {
     ...DEFAULT_RULES,
     winScore: 10000,
     openingScore: 500,
     category: 'casual',
-    description: "Classic Rules • 10,000 Pts"
+    description: "Standard • 10k Win • 500 Open"
 }));
 games.set('Classic 2', new GameState('Classic 2', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    openingScore: 500,
+    openingScore: 0,
+    threeFarklesPenalty: 500, // Reduced penalty
     category: 'casual',
-    description: "Classic Rules • 10,000 Pts"
+    description: "Friendly • 10k Win • No Open"
 }));
 games.set('Classic 3', new GameState('Classic 3', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    openingScore: 500,
+    openingScore: 1000,
     category: 'casual',
-    description: "Classic Rules • 10,000 Pts"
+    description: "Pro • 10k Win • 1000 Open"
 }));
 
 // 3. Casual House Rules (Custom Logic)
 games.set('House 1', new GameState('House 1', {
     ...DEFAULT_RULES,
     winScore: 10000,
+    openingScore: 500,
     enableThreePairs: true,
-    threePairs: 750, // "Lot less value" as requested (std 1500)
+    threePairs: 750,
     enable4Straight: true,
-    fourStraight: 500, // New logic
+    fourStraight: 500,
     enable5Straight: true,
-    fiveStraight: 1200,
+    fiveStraight: 1000,
     category: 'casual',
-    description: "House Variants: 3 Pairs • 4/5-Run"
+    description: "Combo King • Pairs & Runs"
 }));
 games.set('House 2', new GameState('House 2', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    enableThreePairs: true,
-    threePairs: 750,
-    enable4Straight: true,
-    enable5Straight: true,
-    fiveStraight: 1200,
+    openingScore: 500,
+    highStakes: true,
+    toxicTwos: true,
     category: 'casual',
-    description: "House Variants: 3 Pairs • 4/5-Run"
+    description: "Risky • High Stakes & Toxic 2s"
 }));
-games.set('House 3 (High Stakes)', new GameState('House 3 (High Stakes)', {
+games.set('House 3', new GameState('House 3', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    highStakes: true,
+    openingScore: 500,
+    welfareMode: true,
+    enableSixOnesInstantWin: true,
     category: 'casual',
-    description: "High Stakes: Vote w/ Dice"
+    description: "Chaos • Welfare & Instant Win"
 }));
 
 function getRoomList() {

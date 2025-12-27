@@ -146,8 +146,9 @@ function isScoringSelection(dice, rules = DEFAULT_RULES) {
 }
 // --- INLINED RULES END ---
 
-// Global reference for Discord SDK (dynamically imported)
-let DiscordSDK = null;
+import { DiscordSDK } from "/libs/@discord/embedded-app-sdk/output/index.mjs";
+
+// Global reference
 const DISCORD_CLIENT_ID = '1317075677927768074';
 
 console.log("Farkle Client Execution Started");
@@ -171,12 +172,17 @@ class FarkleClient {
             this.playerId = null;
             this.gameState = null;
             this.discordSdk = null;
-            this.playerName = null;
+            this.playerName = `Player ${Math.floor(Math.random() * 1000)}`; // Default
             this.isRolling = false;
             this.pendingState = null;
             this.rules = {}; // Will load from server state
             this.isSpeedMode = false;
             this.isSpectator = false; // NEW
+            this.reconnectToken = localStorage.getItem('farkle-reconnect-token') || null;
+            if (!this.reconnectToken) {
+                this.reconnectToken = 'rt_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+                localStorage.setItem('farkle-reconnect-token', this.reconnectToken);
+            }
 
             // UI Elements
             this.ui = {
@@ -245,26 +251,10 @@ class FarkleClient {
 
             this.debugLog("Modules initialized");
 
-            this.initDiscord().catch(err => {
-                this.debugLog(`Discord Init Catch: ${err.message}`);
+            // Init Discord THEN Socket
+            this.initDiscord().finally(() => {
+                this.initSocket();
             });
-
-            if (typeof io === 'undefined') {
-                this.debugLog("CRITICAL: Socket.io (io) is not defined!");
-                return;
-            }
-
-            this.debugLog("Connecting to server...");
-            this.socket = io({
-                reconnectionAttempts: 10,
-                reconnectionDelay: 1000,
-                autoConnect: false,
-                transports: ['websocket', 'polling']
-            });
-
-            this.initSocketEvents();
-            this.socket.connect();
-            this.debugLog("Socket connect() called");
 
         } catch (err) {
             console.error("Init Error:", err);
@@ -272,72 +262,74 @@ class FarkleClient {
         }
     }
 
-    debugLog(msg) {
-        console.log(`[Debug] ${msg}`);
-        const debugDiv = document.getElementById('connection-debug');
-        if (debugDiv) debugDiv.textContent = msg;
-    }
+    initSocket() {
+        if (typeof io === 'undefined') {
+            this.debugLog("CRITICAL: Socket.io (io) is not defined!");
+            return;
+        }
 
-    initSettings() {
-        this.ui.settingsBtn.addEventListener('click', () => this.ui.settingsModal.classList.remove('hidden'));
-        this.ui.settingsModal.querySelector('.close-modal').addEventListener('click', () => this.ui.settingsModal.classList.add('hidden'));
-
-        this.ui.themeBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const theme = btn.dataset.theme;
-                let color = '#0f3d24'; // default green
-                if (theme === 'blue') color = '#0f172a';
-                if (theme === 'red') color = '#450a0a';
-                if (theme === 'purple') color = '#3b0764';
-
-                document.body.style.setProperty('--felt-color', color);
-
-                this.ui.themeBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                localStorage.setItem('farkle-theme', theme);
-            });
+        this.debugLog("Connecting to server...");
+        this.socket = io({
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            autoConnect: false,
+            transports: ['websocket', 'polling'],
+            auth: {
+                name: this.playerName // Send name in handshake/auth if useful, but we send in join_game
+            }
         });
 
-        this.ui.diceThemeSelect.addEventListener('change', (e) => {
-            const val = e.target.value;
-            document.body.setAttribute('data-dice-theme', val);
-            localStorage.setItem('farkle-dice-theme', val);
-        });
-
-        const savedTheme = localStorage.getItem('farkle-theme');
-        if (savedTheme) {
-            const btn = document.querySelector(`.theme-btn[data-theme="${savedTheme}"]`);
-            if (btn) btn.click();
-        }
-        const savedDice = localStorage.getItem('farkle-dice-theme');
-        if (savedDice) {
-            this.ui.diceThemeSelect.value = savedDice;
-            document.body.setAttribute('data-dice-theme', savedDice);
-        }
+        this.initSocketEvents();
+        this.socket.connect();
+        this.debugLog("Socket connect() called");
     }
 
-    initSimpleBackground() {
-        const container = document.getElementById('bg-dice-container');
-        if (!container) return;
-        const diceChars = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
-        const numDice = 20;
-
-        for (let i = 0; i < numDice; i++) {
-            const die = document.createElement('div');
-            die.classList.add('bg-die');
-            die.textContent = diceChars[Math.floor(Math.random() * diceChars.length)];
-            die.style.left = `${Math.random() * 100}%`;
-            die.style.fontSize = `${Math.random() * 2 + 1}rem`;
-            die.style.opacity = '0.05';
-            die.style.animationDuration = `${Math.random() * 10 + 15}s`;
-            die.style.animationDelay = `-${Math.random() * 20}s`;
-            container.appendChild(die);
-        }
-    }
-
+    // --- Discord Integration ---
     async initDiscord() {
-        this.debugLog("Discord Integration: Manual Mode");
-        this.playerName = `Player ${Math.floor(Math.random() * 1000)}`;
+        try {
+            // Check if running in iframe (Discord env) - simplistic check
+            if (window.self === window.top && !window.location.search.includes('frame_id')) {
+                this.debugLog("Not in Discord (Standalone). Using Random Name.");
+                return;
+            }
+
+            this.debugLog("Initializing Discord SDK...");
+            this.discordSdk = new DiscordSDK(DISCORD_CLIENT_ID);
+
+            await this.discordSdk.ready();
+            this.debugLog("Discord SDK Ready");
+
+            // Client-Side Auth Flow (Implicit Grant)
+            const { code } = await this.discordSdk.commands.authorize({
+                client_id: DISCORD_CLIENT_ID,
+                response_type: "code",
+                state: "",
+                prompt: "none",
+                scope: ["identify", "guilds"]
+            });
+            // We can't exchange code without backend secret.
+            // But sometimes the 'token' response type is supported for embedded, or we just rely on presence?
+            // Actually, for pure client-side username without backend:
+            // We can try to authenticate with the returned code? No.
+            // Let's try to get PARTICIPANTS.
+
+            // Attempt to get user info via authenticate() command which might work in embedded context?
+            const response = await this.discordSdk.commands.authenticate({
+                access_token: code // This might fail if it expects a real access token.
+            });
+
+            // If that fails, we fallback.
+            if (response && response.user) {
+                this.playerName = response.user.global_name || response.user.username;
+                this.debugLog(`Authenticated as ${this.playerName}`);
+            }
+
+        } catch (err) {
+            console.error("Discord Auth Error:", err);
+            this.debugLog(`Discord Auth Failed: ${err.message} - Using Default Name`);
+            // Fallback
+            this.playerName = `Player ${Math.floor(Math.random() * 1000)}`;
+        }
     }
 
     async updateDiscordPresence(details, state) {
@@ -409,7 +401,7 @@ class FarkleClient {
             }
 
             if (this.roomCode) {
-                this.socket.emit('join_game', { roomCode: this.roomCode });
+                this.socket.emit('join_game', { roomCode: this.roomCode, reconnectToken: this.reconnectToken, name: this.playerName });
             }
         });
 
@@ -459,17 +451,22 @@ class FarkleClient {
             this.isRolling = true;
             if (this.ui.diceContainer) this.ui.diceContainer.classList.add('rolling');
 
-            this.dice3D.roll(diceValues).then(() => {
-                this.isRolling = false;
+            this.dice3D.roll(diceValues).then(async () => {
                 if (this.ui.diceContainer) this.ui.diceContainer.classList.remove('rolling');
+
+                if (data.farkle) {
+                    this.showFeedback("FARKLE!", "error");
+                    // Buffer delay: maintain isRolling=true to catch incoming state updates in pendingState
+                    const delay = this.isSpeedMode ? 800 : 2000;
+                    await new Promise(r => setTimeout(r, delay));
+                }
+
+                this.isRolling = false;
 
                 const finalState = this.pendingState || data.state;
                 this.pendingState = null;
 
                 this.updateGameState(finalState);
-                if (data.farkle) {
-                    this.showFeedback("FARKLE!", "error");
-                }
                 if (data.hotDice) {
                     this.showFeedback("HOT DICE!", "success");
                 }
@@ -580,7 +577,7 @@ class FarkleClient {
 
     joinRoom(roomCode, asSpectator = false) {
         this.debugLog(`Joining ${roomCode} (${asSpectator ? 'Spectating' : 'Playing'})...`);
-        this.socket.emit('join_game', { roomCode: roomCode, spectator: asSpectator });
+        this.socket.emit('join_game', { roomCode: roomCode, spectator: asSpectator, reconnectToken: this.reconnectToken, name: this.playerName });
     }
 
     joinGame() {
@@ -767,6 +764,12 @@ class FarkleClient {
             debugPanel.appendChild(forceBtn);
             debugPanel.appendChild(restartBtn);
             this.ui.bankBtn.parentElement.parentElement.appendChild(debugPanel);
+            // Host Checks
+            if (this.gameState.hostId === this.socket.id) {
+                debugPanel.style.display = 'block';
+            } else {
+                debugPanel.style.display = 'none';
+            }
         }
 
         const startBtn = document.getElementById('lobby-start-btn');
