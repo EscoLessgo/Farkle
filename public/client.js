@@ -32,13 +32,13 @@ const DEFAULT_RULES = {
     enableSixOnesInstantWin: false,
 
     // Logic Variants
-    openingScore: 500,
+    openingScore: 0,
     winScore: 10000,
     threeFarklesPenalty: 1000,
     toxicTwos: false,
     welfareMode: false,
     highStakes: false,
-    noFarkleFirstRoll: false
+    noFarkleFirstRoll: true
 };
 
 function calculateScore(dice, rules = DEFAULT_RULES) {
@@ -169,10 +169,16 @@ class FarkleClient {
 
         try {
             this.roomCode = null;
+            this.roomId = null;
+            // Restore Room Code if available for auto-rejoin
+            this.roomCode = localStorage.getItem('farkle-room-code') || null;
             this.playerId = null;
             this.gameState = null;
+            this.gameState = null;
             this.discordSdk = null;
-            this.playerName = `Player ${Math.floor(Math.random() * 1000)}`; // Default
+            // Load preserved name or default
+            const storedName = localStorage.getItem('farkle-username');
+            this.playerName = storedName || `Player ${Math.floor(Math.random() * 1000)}`;
             this.isRolling = false;
             this.pendingState = null;
             this.rules = {}; // Will load from server state
@@ -317,36 +323,31 @@ class FarkleClient {
             await this.discordSdk.ready();
             this.debugLog("Discord SDK Ready");
 
-            // Client-Side Auth Flow (Implicit Grant)
-            const { code } = await this.discordSdk.commands.authorize({
+            // Client-Side Auth Flow (Implicit Grant attempt)
+            // Use 'token' response_type to get access_token directly (likely requires Implicit Grant enabled in Dev Portal)
+            const { access_token } = await this.discordSdk.commands.authorize({
                 client_id: DISCORD_CLIENT_ID,
-                response_type: "code",
+                response_type: "token",
                 state: "",
                 prompt: "none",
                 scope: ["identify", "guilds"]
             });
-            // We can't exchange code without backend secret.
-            // But sometimes the 'token' response type is supported for embedded, or we just rely on presence?
-            // Actually, for pure client-side username without backend:
-            // We can try to authenticate with the returned code? No.
-            // Let's try to get PARTICIPANTS.
 
-            // Attempt to get user info via authenticate() command which might work in embedded context?
+            // Authenticate with the token
             const response = await this.discordSdk.commands.authenticate({
-                access_token: code // This might fail if it expects a real access token.
+                access_token: access_token
             });
 
-            // If that fails, we fallback.
             if (response && response.user) {
                 this.playerName = response.user.global_name || response.user.username;
+                localStorage.setItem('farkle-username', this.playerName); // Cache it
                 this.debugLog(`Authenticated as ${this.playerName}`);
             }
 
         } catch (err) {
             console.error("Discord Auth Error:", err);
             this.debugLog(`Discord Auth Failed: ${err.message} - Using Default Name`);
-            // Fallback
-            this.playerName = `Player ${Math.floor(Math.random() * 1000)}`;
+            // Fallback is already set in constructor
         }
     }
 
@@ -634,7 +635,13 @@ class FarkleClient {
 
     joinRoom(roomCode, asSpectator = false) {
         this.debugLog(`Joining ${roomCode} (${asSpectator ? 'Spectating' : 'Playing'})...`);
-        this.socket.emit('join_game', { roomCode: roomCode, spectator: asSpectator, reconnectToken: this.reconnectToken, name: this.playerName });
+
+        let finalName = this.playerName;
+        // removed manual input check
+        localStorage.setItem('farkle-username', finalName);
+        localStorage.setItem('farkle-room-code', roomCode); // Save for refresh
+
+        this.socket.emit('join_game', { roomCode: roomCode, spectator: asSpectator, reconnectToken: this.reconnectToken, name: finalName });
     }
 
     joinGame() {
@@ -782,7 +789,7 @@ class FarkleClient {
             if (!startBtn) {
                 startBtn = document.createElement('button');
                 startBtn.id = 'lobby-start-btn';
-                startBtn.className = 'btn primary';
+                startBtn.className = 'btn primary pulse';
                 startBtn.textContent = 'Start Game';
                 startBtn.onclick = () => this.socket.emit('start_game', { roomCode: this.roomCode });
                 if (this.ui.rollBtn.parentElement) this.ui.rollBtn.parentElement.appendChild(startBtn);
@@ -790,7 +797,8 @@ class FarkleClient {
             if (this.gameState.players.length >= 2) {
                 startBtn.style.display = 'block';
                 startBtn.disabled = false;
-                this.ui.actionText.textContent = "Ready or Wait for more";
+                startBtn.classList.add('pulse');
+                this.ui.actionText.textContent = "Lobby Ready! Start Game?";
             } else {
                 startBtn.style.display = 'block';
                 startBtn.disabled = true;
@@ -955,6 +963,12 @@ class FarkleClient {
         setTimeout(() => {
             this.ui.feedback.classList.add('hidden');
         }, 2000);
+    }
+
+    debugLog(msg) {
+        console.log(`[FarkleClient] ${msg}`);
+        const el = document.getElementById('connection-debug');
+        if (el) el.textContent = msg;
     }
 }
 

@@ -28,13 +28,13 @@ export const DEFAULT_RULES = {
     enable5Straight: false,
 
     // Logic Variants
-    openingScore: 500, // Minimum to get on board
+    openingScore: 0, // Minimum to get on board
     winScore: 10000,
     threeFarklesPenalty: 1000,
     toxicTwos: false, // 4+ twos = 0 score for turn
     welfareMode: false, // 10k exact, overflow goes to low score
     highStakes: false, // Can roll previous player's dice
-    noFarkleFirstRoll: false // House rule
+    noFarkleFirstRoll: true // House rule
 };
 
 export function calculateScore(dice, rules = DEFAULT_RULES) {

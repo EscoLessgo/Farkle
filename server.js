@@ -45,6 +45,7 @@ class GameState {
         this.gameStatus = 'waiting';
         this.winner = null;
         this.hostId = null; // Track Host
+        this.boardClears = 0; // Track how many times board was cleared in a turn
     }
 
     addPlayer(id, name, reconnectToken) {
@@ -100,6 +101,7 @@ class GameState {
         this.diceCountToRoll = 6;
         this.currentDice = [];
         this.canHighStakes = false;
+        this.boardClears = 0;
 
         if (this.rules.highStakes && this.previousPlayerLeftoverDice > 0 && this.previousPlayerLeftoverDice < 6) {
             this.canHighStakes = true;
@@ -119,6 +121,7 @@ class GameState {
 
         let scoreFromSelection = 0;
         let isFirstRollOfTurn = (this.currentDice.length === 0 && this.roundAccumulatedScore === 0);
+        let triggeredHotDice = false;
 
         if (this.currentDice.length > 0) {
             // Re-rolling 
@@ -135,6 +138,8 @@ class GameState {
             this.diceCountToRoll = remaining === 0 ? 6 : remaining;
 
             if (remaining === 0) {
+                triggeredHotDice = true;
+                this.boardClears++;
                 if (this.rules.hotDiceBonus) {
                     this.roundAccumulatedScore += 1000;
                 }
@@ -179,13 +184,20 @@ class GameState {
 
         if (farkle && isFirstRollOfTurn && this.rules.noFarkleFirstRoll) {
             let attempts = 0;
-            while (farkle && attempts < 10) {
-                console.log(`[Game ${this.roomCode}] First Roll Farkle prevented (Rule Active). Rerolling.`);
+            // Increased attempts and added fallback to ensure it is IMPOSSIBLE to Farkle on first roll
+            while (farkle && attempts < 100) {
+                console.log(`[Game ${this.roomCode}] First Roll Farkle prevented (Rule Active). Rerolling (Attempt ${attempts + 1}).`);
                 for (let d of newDice) d.value = Math.floor(Math.random() * 6) + 1;
                 const newVals = newDice.map(d => d.value);
                 farkle = !hasPossibleMoves(newVals, this.rules);
                 if (this.rules.toxicTwos && newVals.filter(v => v === 2).length >= 4) farkle = true;
                 attempts++;
+            }
+            // Fallback: If 100 random attempts fail (astronomically unlikely), force a scoring hand (Straight)
+            if (farkle) {
+                console.log(`[Game ${this.roomCode}] Force-fixing Farkle after 100 attempts.`);
+                for (let i = 0; i < newDice.length && i < 6; i++) newDice[i].value = i + 1;
+                farkle = false;
             }
         }
 
@@ -205,7 +217,7 @@ class GameState {
             dice: newDice,
             farkle,
             roundScore: this.roundAccumulatedScore,
-            hotDice: (this.diceCountToRoll === 6 && !farkle && !isFirstRollOfTurn)
+            hotDice: (triggeredHotDice && !farkle && this.boardClears > 1)
         };
     }
 
@@ -418,6 +430,33 @@ io.on('connection', (socket) => {
                 }
             }
 
+            // Global Reconnect Search
+            if (!existingPlayer && token) {
+                for (const [code, g] of games.entries()) {
+                    if (code === roomCode) continue;
+                    const p = g.players.find(p => p.reconnectToken === token && !p.connected);
+                    if (p) {
+                        console.log(`[Global Reconnect] Found player ${p.name} in ${code}`);
+                        game = g;
+                        roomCode = code;
+                        existingPlayer = p;
+
+                        existingPlayer.id = socket.id;
+                        existingPlayer.connected = true;
+                        existingPlayer.missedTurns = 0;
+                        socket.join(roomCode);
+
+                        if (!game.hostId || !game.players.find(hp => hp.id === game.hostId && hp.connected)) {
+                            game.hostId = existingPlayer.id;
+                        }
+
+                        socket.emit('joined', { playerId: socket.id, state: game.getState(), isSpectator: false });
+                        io.to(roomCode).emit('game_state_update', game.getState());
+                        return;
+                    }
+                }
+            }
+
             // Fallback: Check strictly by socket ID (unlikely on refresh, but good for same-session re-joins)
             existingPlayer = game.players.find(p => p.id === socket.id);
             if (existingPlayer) {
@@ -485,9 +524,17 @@ io.on('connection', (socket) => {
                 }
                 const activeCount = game.players.filter(p => p.connected).length;
                 if (activeCount === 0) {
-                    game.players = [];
-                    game.gameStatus = 'waiting';
-                    game.resetRound();
+                    // Grade period before wipe
+                    setTimeout(() => {
+                        const currentG = games.get(game.roomCode);
+                        if (currentG && currentG.players.filter(pl => pl.connected).length === 0) {
+                            console.log(`[Game ${game.roomCode}] Room empty for 15s. Resetting.`);
+                            currentG.players = [];
+                            currentG.gameStatus = 'waiting';
+                            currentG.resetRound();
+                            io.emit('room_list', getRoomList());
+                        }
+                    }, 15000);
                 }
                 socket.leave(game.roomCode);
                 io.emit('room_list', getRoomList());
@@ -608,12 +655,25 @@ io.on('connection', (socket) => {
                 player.connected = false;
                 const activeCount = game.players.filter(p => p.connected).length;
                 if (activeCount === 0) {
-                    game.players = [];
-                    game.gameStatus = 'waiting';
-                    game.resetRound();
+                    setTimeout(() => {
+                        const currentG = games.get(game.roomCode);
+                        if (currentG && currentG.players.filter(pl => pl.connected).length === 0) {
+                            console.log(`[Game ${game.roomCode}] Room empty (disconnect) for 15s. Resetting.`);
+                            currentG.players = [];
+                            currentG.gameStatus = 'waiting';
+                            currentG.resetRound();
+                            io.emit('room_list', getRoomList());
+                        }
+                    }, 15000);
                 }
                 io.emit('room_list', getRoomList());
                 if (game.gameStatus === 'waiting') {
+                    // In waiting lobby, remove immediately? Or keep same logic? 
+                    // Usually waiting lobby allows instant drop so slots open up.
+                    // But if it's 'waiting' (pre-game), we might want to keep the slot for a second?
+                    // Actually, for pre-game, remove immediately is better to free slots.
+                    // But if it's the ONLY player, we just reset above. 
+                    // If others are there, we remove this player.
                     game.players = game.players.filter(pl => pl.id !== socket.id);
                     io.emit('room_list', getRoomList());
                 }
@@ -637,7 +697,7 @@ games.set('Speed 1', new GameState('Speed 1', {
 games.set('Speed 2', new GameState('Speed 2', {
     ...DEFAULT_RULES,
     winScore: 7500,
-    openingScore: 500,
+    openingScore: 0,
     category: 'speed',
     description: "Race • 7.5k Win • Standard"
 }));
@@ -646,9 +706,9 @@ games.set('Speed 2', new GameState('Speed 2', {
 games.set('Classic 1', new GameState('Classic 1', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    openingScore: 500,
+    openingScore: 0,
     category: 'casual',
-    description: "Standard • 10k Win • 500 Open"
+    description: "Standard • 10k Win • No Open"
 }));
 games.set('Classic 2', new GameState('Classic 2', {
     ...DEFAULT_RULES,
@@ -670,7 +730,7 @@ games.set('Classic 3', new GameState('Classic 3', {
 games.set('House 1', new GameState('House 1', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    openingScore: 500,
+    openingScore: 0,
     enableThreePairs: true,
     threePairs: 750,
     enable4Straight: true,
@@ -683,7 +743,7 @@ games.set('House 1', new GameState('House 1', {
 games.set('House 2', new GameState('House 2', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    openingScore: 500,
+    openingScore: 0,
     highStakes: true,
     toxicTwos: true,
     category: 'casual',
@@ -692,7 +752,7 @@ games.set('House 2', new GameState('House 2', {
 games.set('House 3', new GameState('House 3', {
     ...DEFAULT_RULES,
     winScore: 10000,
-    openingScore: 500,
+    openingScore: 0,
     welfareMode: true,
     enableSixOnesInstantWin: true,
     category: 'casual',
